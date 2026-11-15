@@ -1,8 +1,8 @@
 """Pipeline control (hdlabel/run.py): resume / redo decisions and failure isolation of step()."""
+
 import os
 
 import numpy as np
-
 import pytest
 import yaml
 
@@ -11,25 +11,37 @@ from hdlabel import run
 
 @pytest.fixture
 def area(tmp_path):
-    cfg = dict(name="t", pointcloud_map="/nonexistent/pointcloud_map.pcd", output=str(tmp_path / "out"),
-               scenes=dict(length_m=100), dataset=dict(bev=dict(x=[0, 10], y=[-5, 5], res=0.5)))
-    f = tmp_path / "a.yaml"; f.write_text(yaml.safe_dump(cfg)); return run.Area(str(f))
+    cfg = dict(
+        name="t",
+        pointcloud_map="/nonexistent/pointcloud_map.pcd",
+        output=str(tmp_path / "out"),
+        scenes=dict(length_m=100),
+        dataset=dict(bev=dict(x=[0, 10], y=[-5, 5], res=0.5)),
+    )
+    f = tmp_path / "a.yaml"
+    f.write_text(yaml.safe_dump(cfg))
+    return run.Area(str(f))
 
 
 def script(tmp_path, body):
-    p = tmp_path / "s.py"; p.write_text("import sys, time\n" + body); return str(p)
+    p = tmp_path / "s.py"
+    p.write_text("import sys, time\n" + body)
+    return str(p)
 
 
 def test_skip_redo_and_failure(area, tmp_path):
-    out = tmp_path / "o.txt"; cnt = tmp_path / "count.txt"
+    out = tmp_path / "o.txt"
+    cnt = tmp_path / "count.txt"
     s = script(tmp_path, f"open({str(cnt)!r}, 'a').write('x'); open(sys.argv[1], 'w').write(sys.argv[2])\n")
     run.step(area, "t1", s, [out, "a"], [str(out)])
-    run.step(area, "t1", s, [out, "a"], [str(out)])                   # done: skipped
+    run.step(area, "t1", s, [out, "a"], [str(out)])  # done: skipped
     assert cnt.read_text() == "x"
-    run.step(area, "t1", s, [out, "b"], [str(out)])                   # arguments changed: redone
+    run.step(area, "t1", s, [out, "b"], [str(out)])  # arguments changed: redone
     assert cnt.read_text() == "xx" and out.read_text() == "b"
-    inp = tmp_path / "in.txt"; inp.write_text("1"); os.utime(inp, (out.stat().st_mtime + 10,) * 2)
-    run.step(area, "t1", s, [out, "b"], [str(out)], inputs=[str(inp)])   # input newer than output: redone
+    inp = tmp_path / "in.txt"
+    inp.write_text("1")
+    os.utime(inp, (out.stat().st_mtime + 10,) * 2)
+    run.step(area, "t1", s, [out, "b"], [str(out)], inputs=[str(inp)])  # input newer than output: redone
     assert cnt.read_text() == "xxx"
     bad = script(tmp_path, "sys.exit('boom')\n")
     with pytest.raises(run.StepError):
@@ -38,7 +50,8 @@ def test_skip_redo_and_failure(area, tmp_path):
 
 
 def test_status_record(area):
-    area.record("label", "s1", False, log="x.log", note="boom"); area.record("label", "s2", True)
+    area.record("label", "s1", False, log="x.log", note="boom")
+    area.record("label", "s2", True)
     assert area.status["label"]["s1"]["ok"] is False and area.status["label"]["s2"]["ok"] is True
     assert os.path.exists(f"{area.out}/status.json")
 
@@ -47,9 +60,12 @@ def test_label_sharing(area, monkeypatch):
     """repeated drives of a route: a scene with the same fused drives inside an earlier scene's box shares its labels."""
     drives = {"a_0": ["a", "b"], "b_0": ["b", "a"], "b_1": ["b", "a"], "c_0": ["c"]}
     monkeypatch.setattr(run, "scene_drives", lambda area_, s: drives[s["id"]])
-    sc = [dict(id="a_0", bbox=[0, 0, 100, 100]), dict(id="b_0", bbox=[2, 1, 115, 99]),     # inside (20 m tolerance)
-          dict(id="b_1", bbox=[50, 0, 200, 100]),                                         # elsewhere
-          dict(id="c_0", bbox=[0, 0, 100, 100])]                                          # other drives
+    sc = [
+        dict(id="a_0", bbox=[0, 0, 100, 100]),
+        dict(id="b_0", bbox=[2, 1, 115, 99]),  # inside (20 m tolerance)
+        dict(id="b_1", bbox=[50, 0, 200, 100]),  # elsewhere
+        dict(id="c_0", bbox=[0, 0, 100, 100]),
+    ]  # other drives
     assert run.label_owners(area, sc) == {"a_0": "a_0", "b_0": "a_0", "b_1": "b_1", "c_0": "c_0"}
 
 
@@ -59,7 +75,9 @@ def test_tile_runs_align_drives():
     cuts = []
     for xy in (road(10, 900), road(170, 1000)):
         s = np.r_[0, np.cumsum(np.linalg.norm(np.diff(xy, axis=0), axis=1))]
-        cuts.append({c for c in (round(float(xy[r[0], 0])) for r in run.tile_runs(xy, s, 300)) if 170 < c < 900})   # common part
+        cuts.append(
+            {c for c in (round(float(xy[r[0], 0])) for r in run.tile_runs(xy, s, 300)) if 170 < c < 900}
+        )  # common part
     assert cuts[0] == cuts[1] == {300, 600}
 
 
@@ -68,10 +86,53 @@ def test_config_layers(tmp_path):
     (tmp_path / "logs" / "drive_2026-01-02-03-04-05").mkdir(parents=True)
     (tmp_path / "logs" / "drive_2026-01-02-03-04-05" / "a.mcap").write_bytes(b"")
     (tmp_path / "single.mcap").write_bytes(b"")
-    f = tmp_path / "p.yaml"; f.write_text(yaml.safe_dump(dict(name="p", pointcloud_map="/x.pcd", scenes=dict(length_m=100))))
-    c = run.load_config(str(f), logs=[str(tmp_path / "logs" / "*"), str(tmp_path / "single.mcap")], output=str(tmp_path / "out"))
-    assert c["scenes"] == dict(length_m=100, context_m=150, corridor_m=40)     # merged with the defaults
-    assert c["topics"]["pose"] and c["cameras"]                               # defaults kept
+    f = tmp_path / "p.yaml"
+    f.write_text(yaml.safe_dump(dict(name="p", pointcloud_map="/x.pcd", scenes=dict(length_m=100))))
+    c = run.load_config(
+        str(f), logs=[str(tmp_path / "logs" / "*"), str(tmp_path / "single.mcap")], output=str(tmp_path / "out")
+    )
+    assert c["scenes"] == dict(length_m=100, context_m=150, corridor_m=40)  # merged with the defaults
+    assert c["topics"]["pose"] and c["cameras"]  # defaults kept
     area = run.Area(c)
     assert sorted(area.drives) == ["20260102-030405", "single"]
     assert area.map == "/x.pcd" and area.out == str(tmp_path / "out" / "p")
+
+
+def test_code_change_redoes(area, tmp_path):
+    """a changed step script is run again even with the same arguments (run.code_version)."""
+    out = tmp_path / "o.txt"
+    s = script(tmp_path, "open(sys.argv[1], 'w').write('v1')\n")
+    run.step(area, "t3", s, [out], [str(out)])
+    open(s, "w").write("import sys\nopen(sys.argv[1], 'w').write('v2')\n")
+    run._CODE.clear()  # a new run of the pipeline hashes the code again
+    run.step(area, "t3", s, [out], [str(out)])
+    assert out.read_text() == "v2"
+
+
+def test_cameras_replaced(tmp_path):
+    """a project's camera list replaces the default one (no default cameras reported missing)."""
+    f = tmp_path / "p.yaml"
+    f.write_text(yaml.safe_dump(dict(name="p", cameras={0: {}}, scenes=dict(length_m=50))))
+    c = run.load_config(str(f))
+    assert list(c["cameras"]) == [0] and c["scenes"]["context_m"] == 150
+
+
+def test_code_version_follows_imports():
+    """the hash covers modules imported as `from hdlabel import x` and `from hdlabel.x import y` (transitively)."""
+    deps = {os.path.basename(f) for f in run._hdlabel_imports(f"{run.ROOT}/hdlabel/steps/review.py")}
+    assert {"review_html.py", "bev.py", "common.py", "mapproj.py"} <= deps
+
+
+def test_class_map_env(tmp_path):
+    """segmentation.class_map reaches the steps as $HDLABEL_CLASS_MAP and replaces the Vistas ids of common.GROUPS."""
+    import json
+    import subprocess
+    import sys
+
+    cm = dict(road=[1], marking=[2], crosswalk=[3], manhole=[4], curb=[5], sidewalk=[6], offroad=[7, 8], vertical=[8])
+    env = dict(os.environ, HDLABEL_CLASS_MAP=json.dumps(cm), PYTHONPATH=run.ROOT)
+    code = "from hdlabel.mapproj import seg_lut; l = seg_lut(); print(l[1], l[2], l[7], l[8], l[13])"
+    out = subprocess.run(
+        [sys.executable, "-c", code], env=env, capture_output=True, text=True, check=True
+    ).stdout.split()
+    assert out == ["0", "1", "6", "7", "7"]  # road, marking, offroad; vertical and unknown ids -> other (never voted)

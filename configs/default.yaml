@@ -20,6 +20,7 @@ base_frame: base_link
 
 # ---- cameras used for labelling: <id>: {} = pinhole with the valid-pixel crop of the calibrated distortion model,
 #      <id>: {hfov: H} = pinhole with H deg horizontal FoV (wide / fisheye lenses). Cameras missing in a bag are skipped.
+#      Topics other than the `topics` templates: <id>: {image: /front/image/compressed, camera_info: /front/camera_info}
 cameras:
   8: {hfov: 90}
   5: {}
@@ -34,18 +35,37 @@ cameras:
 reference_camera: 8           # sample times follow this camera (front)
 image_scale: 0.5              # images are stored at this scale
 jpeg_quality: 95
-tf_static: null               # calibration file ({frame: 4x4 T_base_frame}, as written by ingest) for bags without /tf_static;
-                              # if unset, another drive's /tf_static is used
+tf_static: null               # camera mounting for bags without /tf_static (else another drive's /tf_static is used):
+                              #   .json {frame: 4x4 T_base_frame} (ingest's tf_static.json), .mcap (a bag with /tf_static), or
+                              #   .yaml [{frame: cam_front, parent: base_link, translation: [x, y, z], rotation: [qx, qy, qz, qw]}, ...]
+
+# ---- road marking conventions (defaults: Japan)
+markings:
+  arrow_templates: jp         # hdlabel/assets/arrow_templates_<set>.npz (or a path): arrow shapes for direction matching
+  line_width: 0.5             # painted lines wider than this (m) are areas (marking_area), thinner ones lines
+  stop_line: {min_width: 0.35, min_length: 3.0, max_cos: 0.35}  # a line across the lanes (|cos| to them < max_cos), paint
+                                                                 # at least min_width wide (lane lines ~0.15 m)
 
 # ---- processing
+segmentation:
+  model: facebook/mask2former-swin-large-mapillary-vistas-semantic  # a Hugging Face Mask2Former checkpoint (README: license!),
+                                                                     # or color_stub (synthetic data)
+  class_map: null             # null: Mapillary Vistas ids (hdlabel/common.py GROUPS). Another model: its class ids per group,
+                              # {road: [..], marking: [..], crosswalk: [..], manhole: [..], curb: [..], sidewalk: [..],
+                              #  offroad: [..], vertical: [..]} (vertical = walls, fences, vegetation: never voted on the ground)
 scenes:  {length_m: 300, context_m: 150, corridor_m: 40}  # scene = a drive inside one cell of a fixed length_m map grid; labels
                                                           # cover that route +- context_m (the BEV ahead / behind) + corridor_m;
                                                           # optional region: [xmin, ymin, xmax, ymax] (map) to label only there
-calib:   {scenes: 3}          # image time offsets from the N scenes with the most turning
-fusion:  {max_drives: 5}      # labels of a scene from at most N drives on its road level
-dataset: {every_s: 0.5, val_every_s: 0.1, history_s: 2.0, history_dt_s: 0.5,
+calib:   {scenes: 3,          # image time offsets estimated on the N scenes with the most turning,
+          time_offset: estimate}  # or a fixed offset in s for every camera (e.g. 0: hardware-synchronised cameras)
+fusion:  {max_drives: 5,       # labels of a scene from at most N drives on its road level,
+          max_days_apart: null} # recorded at most this many days apart from the scene's drive (null: any)
+dataset: {every_s: 0.5, val_every_s: null,  # val sample spacing (null = every_s; 0.1 = every model cycle for online_eval)
+          history_s: 2.0, history_dt_s: 0.5,
           bev: {x: [-50, 150], y: [-80, 80], res: 0.2},  # default ego-frame crop (the loader may use any range / res)
           split: {tile_m: 250, val_every: 5}}           # val = every 5th map tile (by location)
-debug: true                   # debug images + PCDs (--no-debug or false for large runs)
+debug: true                   # debug images + PCDs + audit (--no-debug or false for large runs)
+audit: {sample: 5, seed: 0, max_risk: 0.3}  # acceptance: scenes over max_risk need review; `sample` random scenes to inspect
 prune_frames: false           # true: after export delete frames neither the dataset nor labelling uses
 jobs: {cpu: 4, gpu: 1}        # parallel scenes / drives; GPU steps at once
+device: auto                  # torch device of the GPU steps: auto (cuda if available) / cuda / cuda:1 / cpu (slow; tests)
