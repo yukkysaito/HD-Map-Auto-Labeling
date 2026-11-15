@@ -5,7 +5,7 @@ Automatic generation of HD-map training data from rosbags.
 From rosbags (cameras, localization, the vehicle's official calibration) and a LiDAR point cloud map, this tool builds
 ground truth for online HD-map models that take multi-camera, multi-frame input:
 - raster labels (road, lane markings, crosswalks, curbs, sidewalks, ...)
-- 3D vectors (lane lines, crosswalks, curbs, road boundaries, **turn arrows with their allowed directions**)
+- 3D vectors (lane lines, stop lines, crosswalks, curbs, road boundaries, **turn arrows with their allowed directions**)
 
 **No HD map (lanelet2 / vector map) is used.** No flat-ground assumption either: slopes, overpasses and roads under
 elevated structures are handled.
@@ -64,7 +64,7 @@ stored once, in map coordinates).
 | `map_surface.py` | 3D road surface of the vehicle's road level from the point cloud map (`hdlabel/surface.py`):<br>- points are split into height layers<br>- only layers connected to the trajectory by small steps are kept<br>- so under an overpass the surface is the ground, on a bridge the deck; other levels never mix |
 | `project_labels.py` | The segmentation of every camera of every drive is cast as rays onto the surface (GPU) and voted into 0.1 m cells.<br>- only drives on the same road level are fused<br>- frames taken while the vehicle was on another level are skipped |
 | `arrows.py` | For every arrow a sharp 2 cm road patch is built from a nearby (2.5-11 m) camera image.<br>- matched against templates cut from real arrows (straight, right, straight + left; mirrored / reversed / scaled automatically) to get the heading and allowed directions (`hdlabel/arrowshape.py`)<br>- the raster is redrawn with the measured outline |
-| `vectorize.py` | Vectors from the label map: lane lines (solid / dashed, painted segments), crosswalks, curbs, road boundaries (real boundary or edge of the observed area), drivable area, arrows. Applies review fixes (`review/<name>/*.json`, map coordinates). |
+| `vectorize.py` | Vectors from the label map: lane lines (solid / dashed, painted segments), stop lines (wide lines across the lanes), crosswalks, curbs, road boundaries (real boundary or edge of the observed area), drivable area, arrows. Applies review fixes (`review/<name>/*.json`, map coordinates). |
 | `export.py` | Writes the training data. Samples at the reference camera's times: every 0.5 s for train, 0.1 s for val (per-cycle evaluation).<br>QA fails a sample when: the near range is unobserved, time offset estimation failed, localization is missing, or a reviewer rejected it. |
 | `review.py`, `geom_check.py` | Debug output (`docs/ANNOTATION.md`):<br>- sheets with labels drawn on the camera images, map, arrow list<br>- curbs vs. LiDAR height steps, vector heights vs. LiDAR ground (checks independent of the cameras)<br>- PCDs |
 

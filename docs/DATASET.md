@@ -1,4 +1,4 @@
-# Training data format (format 2)
+# Training data format (format 3)
 
 Target model: multi-camera, multi-frame input; every cycle it outputs the HD map around the vehicle (200-300 m),
 as a raster (BEV segmentation) or as vectors (MapTR style). Both kinds of ground truth come from the same labels.
@@ -92,6 +92,7 @@ the deck on a bridge; levels never mix.
 |---|---|---|
 | `lane_line` | `points` line | `style`: solid / dashed / short, `painted` (painted fraction), `segments` (painted intervals [s0, s1] m from the start of the visible part), `length` |
 | `arrow` | `points` line (tail -> tip) | `directions`: a set of `straight` / `left` / `right` (e.g. `["straight", "left"]`), `shape`: S / L / R / SL / SR, `outlines` (paint outline rings, 3D). For e.g. right-turn-only lanes |
+| `stop_line` | `points` line | `width` (m; `vectors.geojson` also has `length`). A wide (~0.45 m) line across the lanes; before format 3 these were `lane_line` |
 | `curb` | `points` line | |
 | `road_boundary` | `points` line | `observed`: true = real boundary (curb / sidewalk / off-road outside), false = edge of the observed area (**do not learn it as a boundary**) |
 | `crosswalk` | `rings` polygon | `type` (set by review, e.g. `red_white`) |
@@ -103,6 +104,7 @@ Mapping to MapTR-style classes (the loader's `VECTOR_CLASSES`):
 - boundary = `curb` + `road_boundary` (observed)
 - ped_crossing = `crosswalk`
 - arrow = `arrow` (point order = arrow heading, `vec_dir` = allowed directions)
+- stop_line = `stop_line`
 
 ## Reference loader (`hdlabel/loader.py`)
 ```python

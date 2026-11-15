@@ -334,7 +334,7 @@ def dataset_index(area):
         out.append(dict(scene=s["id"], drive=s["drive"], path=s["id"], samples=sc["samples"], qa_ok=sc["qa_ok"], split=split, tile=tile,
                         bags=sc["bags"], t_range=s["t_range"]))
     n = {k: sum(o["qa_ok"] for o in out if o["split"] == k) for k in ("train", "val")}
-    idx = dict(format=2, name=area.name, cameras=[int(c) for c in area.cfg["cameras"]], classes=CLASSES, vector_classes=VECTOR_CLASSES,
+    idx = dict(format=3, name=area.name, cameras=[int(c) for c in area.cfg["cameras"]], classes=CLASSES, vector_classes=VECTOR_CLASSES,
                arrow_directions=ARROW_DIRECTIONS, bev=area.cfg["dataset"]["bev"], split=dict(area.cfg["dataset"].get("split", {}), samples=n),
                samples=sum(o["samples"] for o in out), qa_ok=sum(o["qa_ok"] for o in out), scenes=out)
     os.makedirs(area.dataset, exist_ok=True); f = f"{area.dataset}/dataset.json"   # unchanged: keep its time (statistics are not redone)

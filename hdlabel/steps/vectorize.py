@@ -5,6 +5,8 @@ Elements (3D, map frame; z from the map surface):
                               (collinear, gap <= --max-gap m over road, not across crosswalks / off-road).
                               props: style solid | dashed | short, painted (share of the length that is paint),
                               width (m), segments (painted intervals as [s0, s1] along the line, m)
+  stop_line       LineString  a thin line ACROSS the lanes (common.stop_lines: |cos| to the direction of the long lane lines
+                              around < --stop-cos, paint wider than --stop-width, longer than --stop-length). props: length, width
   marking_area    Polygon     wide or compact markings (stop bars wider than --line-width, symbols, hatched zones)
   arrow           LineString  lane direction arrow, tail -> tip (from OUT_OF_project_labels/arrows.json, steps/arrows.py).
                               props: directions (straight / left / right, e.g. ["straight", "left"]), shape (S, L, R, SL,
@@ -32,6 +34,7 @@ from scipy.spatial import cKDTree
 from skimage.morphology import skeletonize
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+from hdlabel.common import stop_lines
 from hdlabel.mapproj import arrow_cls, load_arrows
 
 p = argparse.ArgumentParser()
@@ -44,6 +47,9 @@ p.add_argument("--curb-gap", type=float, default=3.0); p.add_argument("--min-cur
 p.add_argument("--simplify", type=float, default=0.05, help="Douglas-Peucker tolerance for lines (m)")
 p.add_argument("--arrow-tail", type=float, default=15.0, help="lane-line pieces on an arrow axis up to this far behind its tail "
                "are part of the arrow (dashed tails), not lane lines (m)")
+p.add_argument("--stop-width", type=float, default=0.35, help="stop line: min paint width (m; lane lines ~0.15, stop lines ~0.45)")
+p.add_argument("--stop-length", type=float, default=3.0, help="stop line: min length (m)")
+p.add_argument("--stop-cos", type=float, default=0.35, help="stop line: max |cos| to the lane direction (long lane lines within 15 m)")
 p.add_argument("--min-drivable", type=float, default=20.0, help="min drivable component area (m2)")
 p.add_argument("--fixes", nargs="*", default=[], help="review json files with 'fixes' lists (map coordinates); fixes of any file "
                "that fall inside this grid are applied, so a review also covers other scenes / drives of the same place")
@@ -268,13 +274,18 @@ for k, pl in by_comp.items():
             if plen(xy) >= a.min_line and not on_arrow_axis(xy): pieces.append(xy)
 area_mask |= (wide > 0) & mk
 bad = [C["crosswalk"], C["curb"], C["sidewalk"], C["offroad"]]
+lls = []
 for xy, segs in join(pieces, a.max_gap, bad):
     L = plen(xy); painted = sum(s1 - s0 for s0, s1 in segs) / max(L, 1e-6)
     ij = xy2px(xy); ok = np.all((ij >= 0) & (ij < cls.shape), 1); ij = ij[ok]; on = mk[ij[:, 0], ij[:, 1]]
     w = float(np.median(2 * dt[ij[on, 0], ij[on, 1]] - 1) * res) if on.any() else None
     style = "solid" if painted >= 0.85 and L >= 6 else ("dashed" if len(segs) >= 2 else "short")
-    add("lane_line", "LineString", simplify(xy, a.simplify), style=style, painted=round(painted, 3), length=round(L, 2),
-        width=None if w is None else round(w, 2), segments=segs)
+    lls.append(dict(xy=xy, segs=segs, length=L, painted=painted, width=w, style=style))
+stop = stop_lines(lls, a.stop_width, a.stop_length, a.stop_cos)
+for k, l in enumerate(lls):
+    if k in stop: add("stop_line", "LineString", simplify(l["xy"], a.simplify), length=round(l["length"], 2), width=round(l["width"], 2))
+    else: add("lane_line", "LineString", simplify(l["xy"], a.simplify), style=l["style"], painted=round(l["painted"], 3),
+              length=round(l["length"], 2), width=None if l["width"] is None else round(l["width"], 2), segments=l["segs"])
 for rings in polygons(area_mask, 0.05, 0.2):
     add("marking_area", "Polygon", rings)
 
@@ -360,7 +371,8 @@ if ortho is not None:
         q = np.array([c[:2] for c in cc]) - origin[:2]; ij = (q - lo) / res
         return np.round(np.c_[ij[:, 0], Wc - ij[:, 1]] * sc).astype(np.int32)
     COL = {"lane_line/solid": (255, 255, 255), "lane_line/dashed": (0, 255, 255), "lane_line/short": (0, 160, 255),
-           "curb": (255, 80, 0), "road_boundary/observed": (0, 0, 255), "road_boundary/unknown": (120, 120, 120), "arrow": (0, 255, 0)}
+           "curb": (255, 80, 0), "road_boundary/observed": (0, 0, 255), "road_boundary/unknown": (120, 120, 120), "arrow": (0, 255, 0),
+           "stop_line": (255, 255, 0)}
     for f in feats:
         pr, g = f["properties"], f["geometry"]
         if g["type"] == "Polygon":

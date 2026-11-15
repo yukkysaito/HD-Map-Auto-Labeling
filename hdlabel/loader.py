@@ -30,8 +30,8 @@ import torch
 from .bev import SceneMap, resample
 
 # MapTR-style vector classes: lane_line -> divider, curb + observed road_boundary -> boundary, crosswalk -> ped_crossing,
-# arrow (lane direction marking, its directions in vec_dir) -> arrow
-VECTOR_CLASSES = ["divider", "boundary", "ped_crossing", "arrow"]
+# arrow (lane direction marking, its directions in vec_dir) -> arrow, stop_line -> stop_line
+VECTOR_CLASSES = ["divider", "boundary", "ped_crossing", "arrow", "stop_line"]
 ARROW_DIRECTIONS = ["straight", "left", "right"]
 
 
@@ -41,6 +41,7 @@ def vec_class(e):
     if k == "curb" or (k == "road_boundary" and e.get("observed")): return 1
     if k == "crosswalk": return 2
     if k == "arrow": return 3
+    if k == "stop_line": return 4
     return None
 
 

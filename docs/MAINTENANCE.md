@@ -19,6 +19,8 @@
 Conventions
 - Label ids and the palette are defined only in `common.CLASSES` / `PALETTE`.
 - Transforms to the ego frame only go through `bev.SceneMap` (no second implementation).
+- `step()` reruns on changed arguments / inputs, not on changed code: after changing a step's code, delete its stamps
+  (`rm output/<name>/work/stamps/<step>_*.json`) or use `--force` with `--scene`.
 - When the data format changes, update `docs/DATASET.md` and the `format` of `dataset.json`.
 - Settings go to `configs/default.yaml`, not into code. No site, vehicle or log paths in the repository
   (`configs/local/` and `review/` are git-ignored).
@@ -78,6 +80,8 @@ measured with the earlier 12-scene layout (a cut every 300 m driven).
 | Missed arrows (1 scene) | all 200 candidate patches checked (`--debug-candidates`): no vehicle arrow among the 165 rejected ones (bicycle lane chevrons are excluded on purpose). Remaining misses: arrows never appearing in the label map (e.g. hidden by a car the whole time) |
 | Overpasses (real drives) | 8 horizontal structures (decks, elevated roads) 5.4-10.1 m above the trajectories were extracted from the map (5 directly above).<br>In every scene containing them the surface at the structure stays within 0.61 m (a sidewalk step) of the driven surface: the structures do not mix in |
 | Overpasses (real map) | checked at a pedestrian deck 5.4 m directly above the trajectory (595 m²).<br>- real ground trajectory: the surface under the deck is the ground (8.7 m), the deck (13.9 m) does not mix in<br>- virtual trajectory on the deck: all 52,797 surface cells at 13.3-14.2 m, no cell at ground height<br>- a virtual drive at the same XY 6 m higher is excluded from fusion by `scene_drives` |
+| Slopes / underpass (real map, virtual drives) | No logged drive climbs a slope (max grade 2.8%), so virtual drives were traced on sloped roads found in the point cloud map (z of a vehicle following the road surface), then the surface was built from them and cropped like a sample.<br>- underpass: 170 m, +2.5 m -> -5.6 m (~5%), passing under a crossing road; half of the cells near the route have another road level above in the LiDAR, none of them took it (0 cells > 1 m off the route level); surface vs. route median 2.9 cm, BEV crop height at the route points ahead vs. their true base_link z: median 3.2 cm, p95 21 cm<br>- rising road over the same junction: 194 m, 4.5% (p95); surface vs. route 1.6 cm, BEV 1.7 cm (p95 12 cm), no other level mixed in<br>Labels (camera side) on slopes are still unverified with real images |
+| Stop lines | 8 distinct stop lines detected in the sample scenes, all 8 correct (checked on the ortho images). On the perpendicular-line candidates, the width / length / angle rule kept 7 of the 8 real stop lines and none of the 6 false ones (guide dashes, fragments) |
 | Learnability | `train_smoke.py --scenes <one scene> --eval-split train --cell 0.4 --steps 2000 --bev -20 60 -30 30 0.2` (6 min).<br>- loss 1.00 -> 0.15<br>- IoU on the training samples: road 0.94, crosswalk 0.92, sidewalk 0.92, offroad 0.88, curb 0.75, marking 0.59 (thin lines are coarse in 0.4 m cells)<br>- `train_smoke_overfit_examples.png`: crosswalks, curbs, lane lines and arrows appear at the same place with the same shape<br>- all train scenes (1382 samples): `--eval-split train --cell 0.4 --steps 8000`, then `--init <that .pt> --steps 10000` (2.5 h in total). loss 1.62 -> 0.60, IoU road 0.75, crosswalk 0.69, sidewalk 0.64, offroad 0.61, curb 0.52, marking 0.41; far above the prior for every class and still rising (the small network converges slowly) |
 | BEV observed fraction (110-150 m ahead) | about 13% |
 | Time (RTX 5070) | - calibration: 13 min with 10 cameras, 3 min with 3 cameras (200 frames per camera instead of 400: offsets within 4 ms, same confidence)<br>- label to debug (12 scenes): about 25 min; arrows 30-60 s per scene<br>- applying review fixes (vectorize and later): 6 min |
@@ -147,7 +151,7 @@ Scale test (2026-11-15): 17 one-minute bags, each as its own drive; no debug out
   stays as lane line fragments. Adding it with a review `add` (docs/ANNOTATION.md) measures it from a sharp patch.
   Verified by disabling automatic detection (acceptance score 0.99) and adding one known right-turn arrow: exactly that
   arrow came out as a right turn, tail and tip within 5 cm of the automatic detection.
-- **Stop lines** are not a class of their own (`type` of marking_area).
+- **Stop lines** are found only when the paint is a thin line (<= `--line-width`) across the lanes; very wide stop bars stay `marking_area`. Other area types (zebra, text, parking) are only set by review: geometry alone separated zebra zones at precision ~0.8 / recall ~0.7 on the reviewed elements, too low to set automatically (image-based classification would be needed).
 - **Repeated drives of a route**: a scene reuses the labels of an earlier scene without computing them when
   - it fuses the same set of drives, and
   - its label box lies inside the earlier scene's box, with a tolerance of `scenes.share_tolerance_m` (default 20 m).
@@ -156,5 +160,5 @@ Scale test (2026-11-15): 17 one-minute bags, each as its own drive; no debug out
   get the same scenes on the same road. In the sample data 11 of 20 scenes were shared (including a drive returning
   to the same place). Samples (images, poses) are still made per drive. A scene whose box sticks out of the earlier
   box by more than the tolerance (e.g. a drive turning another way after the same cell) is not shared.
-- **Slopes and elevated roads with real logs**: the method handles them (3D surface, 3D intersection for the BEV,
-  tests), but no real log driving up a slope or on top of an elevated road has been checked yet.
+- **Slopes and elevated roads with real logs**: the geometry was checked on the real map with virtual drives (baselines), but no
+  logged drive up a slope or on top of an elevated road exists yet, so labels from camera images there are unverified.

@@ -97,7 +97,31 @@ def bag_of(ingest: dict, stamp_ns: int) -> str | None:
     return min(rng, key=lambda b: 0 if rng[b][0] <= stamp_ns <= rng[b][1] else min(abs(stamp_ns - rng[b][0]), abs(stamp_ns - rng[b][1])))
 
 
-VEC_COLOR = dict(lane_line=(255, 255, 255), curb=(255, 80, 0), crosswalk=(255, 0, 255), marking_area=(0, 255, 0),
+def stop_lines(lines: list[dict], min_width: float = 0.35, min_length: float = 3.0, max_cos: float = 0.35,
+               radius: float = 15.0) -> set[int]:
+    """indices of the lane-line candidates that are stop lines: wide paint (stop lines ~0.45 m, lane lines ~0.15 m), long
+    enough, and ACROSS the traffic direction, which is taken from the long lane lines (solid / dashed, >= 6 m) within
+    `radius` m (median |cos| between the line and their segments). lines: dicts with xy [N, 2], length, width, style."""
+    from scipy.spatial import cKDTree
+    mids, dirs, owner = [], [], []
+    for k, l in enumerate(lines):
+        if l["length"] < 6 or l["style"] not in ("solid", "dashed"): continue
+        xy = np.asarray(l["xy"], float); s = np.r_[0, np.cumsum(np.linalg.norm(np.diff(xy, axis=0), axis=1))]
+        q = np.stack([np.interp(np.arange(0, s[-1] + 1e-9, 1.0), s, xy[:, j]) for j in (0, 1)], 1)   # 1 m steps (any input density)
+        for p0, p1 in zip(q[:-1], q[1:]):
+            d = p1 - p0; n = np.linalg.norm(d)
+            if n > 0.3: mids.append((p0 + p1) / 2); dirs.append(d / n); owner.append(k)
+    if len(mids) < 3: return set()
+    tree, dirs, owner = cKDTree(mids), np.array(dirs), np.array(owner); out = set()
+    for k, l in enumerate(lines):
+        if l["length"] < min_length or (l["width"] or 0) < min_width: continue
+        d = l["xy"][-1] - l["xy"][0]; d = d / max(np.linalg.norm(d), 1e-9)
+        idx = [i for i in tree.query_ball_point(l["xy"].mean(0), radius) if owner[i] != k]
+        if len(idx) >= 3 and np.median(np.abs(dirs[idx] @ d)) < max_cos: out.add(k)
+    return out
+
+
+VEC_COLOR = dict(lane_line=(255, 255, 255), stop_line=(255, 255, 0), curb=(255, 80, 0), crosswalk=(255, 0, 255), marking_area=(0, 255, 0),
                  drivable_area=(0, 160, 0), arrow=(0, 0, 255))                               # BGR, for debug drawings
 
 

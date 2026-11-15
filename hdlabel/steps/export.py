@@ -120,7 +120,7 @@ cam_meta = {}
 for c in cams:
     Kj = json.load(open(f"{a.data}/und_cam{c}/K.json"))
     cam_meta[str(c)] = dict(K=Kj["K"], size=Kj["size"], T_base_cam=ext[c].T.tolist(), time_offset_s=ext[c].offset, time_offset_status=off_status[c])
-json.dump(dict(format=2, drive=os.path.basename(a.data.rstrip("/")), bags=[os.path.basename(b) for b in ing.get("bags", [])],
+json.dump(dict(format=3, drive=os.path.basename(a.data.rstrip("/")), bags=[os.path.basename(b) for b in ing.get("bags", [])],
                t_range=[int(t0), int(t1)], every_s=a.every, history=dict(frames=K, dt_s=a.history_dt), cameras=cam_meta, ref_camera=a.ref,
                classes=CLASSES, bev=dict(x=a.x, y=a.y, res=a.res, frame="base_link (snapped onto the map surface)",
                                          layout="row 0 = far (x max), col 0 = left (y max)"),

@@ -91,7 +91,7 @@ for f in json.load(open(VECTORS))["features"]:
         els.append(dict(id=len(els), kind=kind, at=np.round(at, 2).tolist(), arrow_id=pr["arrow_id"], directions=pr["directions"], score=pr["score"]))
         q = ipx(at[None])[0]; cv2.putText(img, f"A{pr['arrow_id']} " + "+".join(d[0].upper() for d in pr["directions"]), (int(q[0]) + 4, int(q[1])),
                                           cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 128, 255), 1, cv2.LINE_AA)
-    if kind in ("lane_line", "marking_area", "crosswalk"):
+    if kind in ("lane_line", "stop_line", "marking_area", "crosswalk"):
         at = pts[len(pts) // 2] if g["type"] == "LineString" else pts.mean(0); i = len(els)
         els.append(dict(id=i, kind=kind, at=np.round(at, 2).tolist(), **{k: v for k, v in pr.items() if k in ("style", "length", "type")}))
         q = ipx(at[None])[0]; cv2.putText(img, str(i), (int(q[0]) + 3, int(q[1]) - 3), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 1, cv2.LINE_AA)
