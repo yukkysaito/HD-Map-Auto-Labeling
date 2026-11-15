@@ -10,7 +10,7 @@ readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10"
 dependencies = [
-    "numpy", "scipy", "opencv-python-headless", "pillow", "pyyaml", "shapely", "scikit-image",
+    "numpy", "scipy", "opencv-python-headless", "pillow", "pyyaml", "shapely", "scikit-image", "matplotlib",
     "mcap", "mcap-ros2-support", "torch", "torchvision", "transformers",
 ]
 
