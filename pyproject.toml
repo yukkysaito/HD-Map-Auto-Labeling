@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hdlabel"
+version = "0.3.0"
+description = "Automatic HD-map training data (raster labels, 3D vectors, turn arrows) from rosbags and a LiDAR point cloud map"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy", "scipy", "opencv-python-headless", "pillow", "pyyaml", "shapely", "scikit-image",
+    "mcap", "mcap-ros2-support", "torch", "torchvision", "transformers",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pyflakes", "ruff"]
+
+[tool.setuptools.packages.find]
+include = ["hdlabel*"]
+
+[tool.setuptools.package-data]
+hdlabel = ["assets/*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B"]
+ignore = ["E501", "E731", "E741", "B905", "B007", "B023"]

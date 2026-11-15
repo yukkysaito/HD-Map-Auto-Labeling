@@ -1,0 +1,6 @@
+output/
+.venv/
+configs/local/
+review/
+**/__pycache__
+.git
