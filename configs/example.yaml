@@ -1,0 +1,8 @@
+# Example project config: copy, edit the paths, run  ./autolabel run my_project.yaml
+# Only keys that differ from configs/default.yaml are needed (topics, cameras, scenes, dataset, jobs, ...).
+name: my_area
+pointcloud_map: /path/to/pointcloud_map.pcd
+logs: ["/path/to/logs/*"]          # one directory per drive (its *.mcap files), or .mcap files (one drive each)
+# tf_static: /path/to/tf_static.json   # for bags recorded without /tf_static
+# debug: false                          # large runs
+# jobs: {cpu: 8, gpu: 1}

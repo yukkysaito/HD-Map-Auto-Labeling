@@ -1,0 +1,74 @@
+"""Ground labels + ortho image of one scene: every camera keyframe of every drive that sees the grid is projected onto
+the 3D map surface (map_surface.py).
+
+Geometry from the LiDAR point cloud map, placement from localization (base_link snapped onto the map surface) x
+official extrinsic + time offset (time_offset.py), classes from the per-image segmentation (common.GROUPS).
+Several drives are fused (votes are summed); keyframes whose camera is farther than --rmax from the grid are skipped, and
+cameras whose time offset could not be estimated (offset_status failed) are not used.
+Per 0.1 m cell: class = argmax of the ground-class votes (0 = unobserved), ortho RGB = distance-weighted mean.
+Writes OUT/ground_map.npz (cls 0.1 m raster: 0 unobserved, 1.. common.CLASSES; height / height_w surface grid; origin,
+lo, res, surf_res; compact votes / n / cells), OUT/ground_map.json, OUT/stats.json; with --debug DIR:
+DIR/ground_map.png (classes), DIR/ortho.jpg (also used by the review sheets)
+"""
+import argparse, glob, json, os, sys, time
+
+import cv2
+import numpy as np
+import torch
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+from hdlabel.common import CLASSES, PALETTE, PoseInterp
+from hdlabel.mapproj import Camera, Projector, loader, snap_to_ground
+
+p = argparse.ArgumentParser()
+p.add_argument("--ground", required=True, help="map_surface.py map_ground.npz"); p.add_argument("--out", required=True)
+p.add_argument("--debug", help="dir for ground_map.png / ortho.jpg")
+p.add_argument("--drive", nargs=2, action="append", required=True, metavar=("DATA", "CALIB"),
+               help="data dir and calib dir of one drive (repeat to fuse drives)")
+p.add_argument("--snap", action=argparse.BooleanOptionalAction, default=True, help="base_link on the map surface (mapproj.snap_to_ground)")
+p.add_argument("--stride", type=int, default=2); p.add_argument("--rmax", type=float, default=30.0)
+p.add_argument("--near", type=float, default=8.0); p.add_argument("--min-mass", type=float, default=0.05)
+p.add_argument("--every", type=int, default=1, help="use every n-th keyframe (quick tests)")
+a = p.parse_args()
+
+pj = Projector(a.ground); acc = pj.new_acc(rgb=True); stats = {}
+lo_m, hi_m = pj.lo - a.rmax, pj.lo + np.array(pj.Lshape) * pj.res + a.rmax       # camera positions that can see the grid
+for data, calib in a.drive:
+    poser = PoseInterp(f"{data}/gt.npy"); name = os.path.basename(data.rstrip("/"))
+    if a.snap: stats[f"{name}/snap"] = snap_to_ground(poser, a.ground)
+    for f in sorted(glob.glob(f"{calib}/cam*.json")):
+        c = int(os.path.basename(f)[3:-5])
+        if not os.path.isdir(f"{data}/seg_cam{c}"): continue
+        if json.load(open(f)).get("offset_status") == "failed":       # unknown time offset: would smear wrong labels
+            stats[f"{name}/cam{c}"] = "skipped: time offset failed"; print(f"{name} cam{c}: skipped (time offset failed)"); continue
+        cam = Camera(data, calib, c, poser); T = cam.T_map_cam(np.arange(len(cam.st)))
+        xy = T[:, :2, 3] - pj.origin[:2]; idx = np.flatnonzero(np.all((xy > lo_m) & (xy < hi_m), 1) & cam.on_level)[::a.every]
+        if not len(idx): continue
+        t0 = time.time(); npx = 0
+        for k, (seg, img) in zip(idx, loader([cam.seg[i] for i in idx], [cam.files[i] for i in idx])):
+            npx += pj.project(T[k], cam.K, seg, img, acc, a.stride, a.rmax, a.near)
+        stats[f"{name}/cam{c}"] = dict(images=len(idx), pixels_M=round(npx / 1e6, 1))
+        print(f"{name} cam{c}: {len(idx)} images, {npx / 1e6:.0f} M ground pixels, {time.time() - t0:.0f} s", flush=True)
+
+votes = acc["votes"]; mass = votes.sum(1)
+cls_c = torch.where(mass > a.min_mass, votes.argmax(1) + 1, torch.zeros_like(mass, dtype=torch.long)).to(torch.uint8)
+cls = pj.dense(cls_c)
+rgb = pj.dense((acc["rgb"] / acc["w"].clamp(min=1e-9)[:, None]).clamp(0, 255).to(torch.uint8))
+groups = CLASSES[1:]
+os.makedirs(a.out, exist_ok=True)
+np.savez_compressed(f"{a.out}/ground_map.npz", cls=cls, height=pj.H.astype(np.float32),
+                    height_w=np.load(a.ground)["height_w"], groups=np.array(groups), origin=pj.origin, lo=pj.lo,
+                    res=pj.res, surf_res=pj.sres, cells=pj.cells, votes=votes.cpu().numpy().astype(np.float16),
+                    n=acc["n"].cpu().numpy().astype(np.float32), snap=bool(a.snap))
+obs = cls > 0
+stats["observed_km2"] = round(float(obs.sum()) * pj.res ** 2 / 1e6, 4)
+stats["class_share"] = {g: round(float((cls == j + 1).sum() / max(obs.sum(), 1)), 4) for j, g in enumerate(groups)}
+json.dump(dict(groups=["unobserved"] + groups, origin=pj.origin.tolist(), lo=pj.lo.tolist(), res=pj.res, surf_res=pj.sres,
+               shape=list(cls.shape), drives=[d for d, _ in a.drive],
+               note="cls[i, j] covers map x = origin.x + lo.x + i*res, y = origin.y + lo.y + j*res"),
+          open(f"{a.out}/ground_map.json", "w"), indent=1)
+json.dump(stats, open(f"{a.out}/stats.json", "w"), indent=1)
+if a.debug:
+    os.makedirs(a.debug, exist_ok=True)
+    cv2.imwrite(f"{a.debug}/ground_map.png", np.rot90(PALETTE[cls])[..., ::-1])
+    cv2.imwrite(f"{a.debug}/ortho.jpg", np.rot90(rgb)[..., ::-1], [cv2.IMWRITE_JPEG_QUALITY, 90])
+print(json.dumps(stats["class_share"]), f"observed {stats['observed_km2']} km2")

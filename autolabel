@@ -1,0 +1,8 @@
+#!/bin/bash
+# entry point:  ./autolabel run --map <pointcloud_map.pcd> --logs "<log dir>/*"   or   ./autolabel run <config.yaml>
+#               ./autolabel -h (all commands / options);  ./autolabel test (unit tests)
+ROOT=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
+unset PYTHONPATH                                    # a sourced ROS workspace must not leak its packages into the venv
+PY="$ROOT/.venv/bin/python"; [ -x "$PY" ] || { echo "no $PY: set up the environment first (README.md)"; exit 1; }
+if [ "$1" = test ]; then shift; cd "$ROOT" && exec "$PY" -m pytest -q -p no:cacheprovider tests "$@"; fi
+exec "$PY" "$ROOT/hdlabel/run.py" "$@"

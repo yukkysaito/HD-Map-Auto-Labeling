@@ -1,0 +1,9 @@
+# generated (./autolabel run)
+output/
+# local, site-specific data: configs with your paths / calibration, review fixes of your areas
+configs/local/
+review/
+# environment
+.venv/
+__pycache__/
+*.pyc

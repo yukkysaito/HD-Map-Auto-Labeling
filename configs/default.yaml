@@ -1,0 +1,51 @@
+# Default settings. A project config (any yaml, see configs/example.yaml) overrides any of these keys; data paths can
+# also be given on the command line:  ./autolabel run --map <pointcloud_map.pcd> --logs "<log dir>/*" [--name NAME]
+# Never point pointcloud_map at a lanelet2 / vector map: no HD map is used.
+
+name: dataset                 # outputs go to <output>/<name>/{dataset,debug,work}
+output: output                # relative paths are relative to the repository
+pointcloud_map: null          # LiDAR point cloud map (.pcd) in the same map frame as the localization (required)
+logs: []                      # globs; a directory = one drive (all its *.mcap), an .mcap file = one drive
+drives: {}                    # explicit drives: name -> {bags: glob, tf_from: drive name or tf_static .json}
+review_dir: null              # hand-made review fixes (docs/ANNOTATION.md); default review/<name>
+
+# ---- rosbag topics ({id} = camera id). Defaults: Autoware.
+topics:
+  pose: /localization/kinematic_state                    # nav_msgs/Odometry: base_link pose in the map frame
+  velocity: /vehicle/status/velocity_status              # autoware_vehicle_msgs/VelocityReport (optional: derived from poses)
+  tf_static: /tf_static                                  # camera mounting (camera frames -> base_link)
+  image: /sensing/camera/camera{id}/image_raw/compressed # sensor_msgs/CompressedImage
+  camera_info: /sensing/camera/camera{id}/camera_info    # sensor_msgs/CameraInfo (intrinsics, distortion, frame)
+base_frame: base_link
+
+# ---- cameras used for labelling: <id>: {} = pinhole with the valid-pixel crop of the calibrated distortion model,
+#      <id>: {hfov: H} = pinhole with H deg horizontal FoV (wide / fisheye lenses). Cameras missing in a bag are skipped.
+cameras:
+  8: {hfov: 90}
+  5: {}
+  3: {}
+  6: {hfov: 100}
+  7: {hfov: 100}
+  0: {}
+  1: {}
+  2: {}
+  9: {hfov: 100}
+  10: {hfov: 100}
+reference_camera: 8           # sample times follow this camera (front)
+image_scale: 0.5              # images are stored at this scale
+jpeg_quality: 95
+tf_static: null               # calibration file ({frame: 4x4 T_base_frame}, as written by ingest) for bags without /tf_static;
+                              # if unset, another drive's /tf_static is used
+
+# ---- processing
+scenes:  {length_m: 300, context_m: 150, corridor_m: 40}  # scene = a drive inside one cell of a fixed length_m map grid; labels
+                                                          # cover that route +- context_m (the BEV ahead / behind) + corridor_m;
+                                                          # optional region: [xmin, ymin, xmax, ymax] (map) to label only there
+calib:   {scenes: 3}          # image time offsets from the N scenes with the most turning
+fusion:  {max_drives: 5}      # labels of a scene from at most N drives on its road level
+dataset: {every_s: 0.5, val_every_s: 0.1, history_s: 2.0, history_dt_s: 0.5,
+          bev: {x: [-50, 150], y: [-80, 80], res: 0.2},  # default ego-frame crop (the loader may use any range / res)
+          split: {tile_m: 250, val_every: 5}}           # val = every 5th map tile (by location)
+debug: true                   # debug images + PCDs (--no-debug or false for large runs)
+prune_frames: false           # true: after export delete frames neither the dataset nor labelling uses
+jobs: {cpu: 4, gpu: 1}        # parallel scenes / drives; GPU steps at once
