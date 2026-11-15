@@ -99,6 +99,10 @@ the deck on a bridge; levels never mix.
 | `marking_area` | `rings` polygon | thick stop lines, text, zebra zones etc. `type` (set by review: zebra / stop_line / text / ...) |
 | `drivable_area` | `rings` polygon (with holes) | |
 
+Every marking (lane_line, stop_line, arrow, marking_area), crosswalk and curb element also has `confidence` (mean
+share of its class in the camera votes of its cells, 0..1) and `observations` (median number of camera views of its
+cells): use them to weight or filter elements in training.
+
 Mapping to MapTR-style classes (the loader's `VECTOR_CLASSES`):
 - divider = `lane_line`
 - boundary = `curb` + `road_boundary` (observed)
@@ -109,11 +113,17 @@ Mapping to MapTR-style classes (the loader's `VECTOR_CLASSES`):
 ## Reference loader (`hdlabel/loader.py`)
 ```python
 from hdlabel.loader import HDMapDataset
-ds = HDMapDataset("output/<name>/dataset/dataset.json", split="train",      # cams=[...] selects cameras and their order (default: all)
-                  history=3, image_size=(704, 448), bev=dict(x=[-50, 150], y=[-80, 80], res=0.2))
-x = ds[0]   # images [T, C, 3, H, W], cam_mask, K, T_base_cam, T_cur_frame [T, C, 4, 4], frame_dt,
-            # bev_cls / bev_height [nx, ny], vec_pts [V, 20, 3] / vec_cls / vec_mask / vec_dir [V, 3]
-els = ds.item_vectors(0)   # vectors with all attributes (painted segments of lane lines, arrow outlines, polygons)
+
+ds = HDMapDataset(
+    "output/<name>/dataset/dataset.json",
+    split="train",  # cams=[...] selects cameras and their order (default: all)
+    history=3,
+    image_size=(704, 448),
+    bev=dict(x=[-50, 150], y=[-80, 80], res=0.2),
+)
+x = ds[0]  # images [T, C, 3, H, W], cam_mask, K, T_base_cam, T_cur_frame [T, C, 4, 4], frame_dt,
+# bev_cls / bev_height [nx, ny], vec_pts [V, 20, 3] / vec_cls / vec_mask / vec_dir [V, 3]
+els = ds.item_vectors(0)  # vectors with all attributes (painted segments of lane lines, arrow outlines, polygons)
 ```
 - Some drives lack cameras (not in the bag): their `cam_mask` is false and their images are 0.
 - Without `bev` the default crop of `dataset.json` is used.
@@ -123,8 +133,8 @@ Drives pass the same places many times, so a random split would make validation 
 location**:
 - the map is cut into `split.tile_m` tiles (default 250 m); every 5th tile (fixed hash) is val.
 - a scene's split is the tile of its route centre.
-- val scenes are sampled at the model cycle (`val_every_s`, 0.1 s): replay them in time order to evaluate every
-  cycle (`hdlabel/eval/online_eval.py`).
+- val scenes are sampled like train (`dataset.every_s`) unless `dataset.val_every_s` is set, e.g. 0.1 s = the model
+  cycle: then they can be replayed in time order to evaluate every cycle (`hdlabel/eval/online_eval.py`).
 
 ## Learnability check (`hdlabel/eval/train_smoke.py`; not model development)
 A small BEV network checks that

@@ -3,25 +3,28 @@
 ## Code structure
 | File | Role |
 |---|---|
-| `autolabel` | Entry point (`./autolabel <cmd> [config.yaml] [--map ...] [--logs ...]`, `./autolabel test`). Drops a ROS PYTHONPATH and runs in `.venv` |
+| `autolabel` | Entry point (`./autolabel <cmd> [config.yaml] [--map ...] [--logs ...]`, `./autolabel test`). Drops a ROS PYTHONPATH and runs in `.venv` (else `python3`) |
 | `configs/default.yaml` | Defaults of every setting (topics, cameras, scenes, dataset, parallelism). Overridden by a project config (`configs/example.yaml`) and the command line |
 | `hdlabel/run.py` | Pipeline control:<br>- parallel execution (GPU steps limited by a semaphore)<br>- resume and failure isolation (`status.json`)<br>- scene splitting, choice of drives on the same road level<br>- train / val split<br>- `dataset.json` |
-| `hdlabel/common.py` | Class definitions (Vistas ids -> labels), pose interpolation, extrinsics, source bag tracing, BEV debug drawing |
+| `hdlabel/common.py` | Class definitions (segmentation ids -> labels, overridable by `segmentation.class_map`), pose interpolation, extrinsics, camera mounting files (`load_tf_static`), stop line rule, device choice, source bag tracing, BEV debug drawing |
 | `hdlabel/surface.py` | Point cloud map I/O (PCD) and the multi-level road surface (height layers + connectivity Dijkstra) |
 | `hdlabel/mapproj.py` | Projection onto the surface (GPU): ray / height field intersection, voting, drawing labels into camera images, ground snapping and other-level detection |
-| `hdlabel/arrowshape.py` | Arrow paint extraction and template matching (`hdlabel/assets/arrow_templates.npz`) |
+| `hdlabel/arrowshape.py` | Arrow paint extraction and template matching (`hdlabel/assets/arrow_templates_<set>.npz`, `markings.arrow_templates`) |
 | `hdlabel/bev.py` | Ego-frame BEV raster and vectors from the map-frame labels (shared by export, loader and review) |
 | `hdlabel/loader.py` | Reference training Dataset (PyTorch) |
-| `hdlabel/steps/*.py` | The processing steps (each runs standalone, see `-h`). Steps are connected only through files |
+| `hdlabel/validate.py` | `./autolabel validate`: acceptance check of an exported dataset (training side) |
+| `hdlabel/audit.py` | Per-scene risk from the automatic checks, ranking, random sample (`debug/audit.json`, `audit.html`) |
+| `hdlabel/review_html.py` | The interactive review page (`debug/scenes/<scene>/review.html`) |
+| `hdlabel/steps/*.py` | The processing steps (each a `main(argv)`, runs standalone, see `-h`). Steps are connected only through files |
 | `hdlabel/eval/` | `compare_labels` / `compare_vectors`: repeatability between two drives (`./autolabel qa`).<br>`dataset_stats`: dataset statistics.<br>`train_smoke` / `online_eval`: learnability check and per-cycle evaluation |
-| `tests/` | Unit tests (`./autolabel test`, about 5 s) |
+| `tests/` | Unit tests + `test_pipeline_synthetic.py`: the whole pipeline on synthetic data (`tests/synthetic.py`) on CPU, labels checked against the synthetic world (~1 min) |
+| `pyproject.toml`, `.github/workflows/ci.yml`, `docker/` | Package, ruff / pytest settings, CI (lint + tests on CPU for every push), GPU image |
 
 Conventions
 - Label ids and the palette are defined only in `common.CLASSES` / `PALETTE`.
 - Transforms to the ego frame only go through `bev.SceneMap` (no second implementation).
-- `step()` reruns on changed arguments / inputs, not on changed code: after changing a step's code, delete its stamps
-  (`rm output/<name>/work/stamps/<step>_*.json`) or use `--force` with `--scene`.
 - When the data format changes, update `docs/DATASET.md` and the `format` of `dataset.json`.
+- Code is formatted with `ruff format` (line length 120) and must pass `ruff check`; CI enforces it.
 - Settings go to `configs/default.yaml`, not into code. No site, vehicle or log paths in the repository
   (`configs/local/` and `review/` are git-ignored).
 
@@ -29,7 +32,8 @@ Conventions
 A step is skipped when
 - all its outputs exist
 - the outputs are newer than the inputs
-- its arguments equal those of the last successful run (`work/stamps/<tag>.json`).
+- its arguments and code equal those of the last successful run (`work/stamps/<tag>.json`; code = the step script,
+  the `hdlabel` modules it imports, transitively, and `hdlabel/assets/`; see `run.code_version`).
 
 When settings or inputs change (new drives, calibration, review fixes) only the affected steps are redone. A failed
 step loses its stamp and runs again on the next `run`. A failed drive only affects its own scenes. Steps that may
@@ -37,7 +41,8 @@ rewrite an input of later steps write a file only when its content changes (e.g.
 cascade.
 
 ## Checks after a change
-1. `./autolabel test` passes and `.venv/bin/python -m pyflakes hdlabel tests` prints nothing.
+1. `./autolabel test` passes (also with `HDLABEL_DEVICE=cpu`), `ruff check . && ruff format --check .` and
+   `pyflakes hdlabel tests` are clean. CI runs the same.
 2. End-to-end test (about 3 min): one ~1-minute bag plus two broken bags. Example config (e.g. `configs/local/e2e.yaml`,
    not versioned):
    ```yaml

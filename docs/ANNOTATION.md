@@ -7,8 +7,16 @@ images are checked. The reviewer can be a person or a vision-capable LLM agent (
 fix files).
 
 ## Procedure
+0. Pick the scenes: `output/<name>/debug/audit.html` ranks every scene by the risk of the automatic checks (curb vs.
+   LiDAR step, vector height, QA failures, time offsets, unobserved boundaries, low-confidence elements, two-drive
+   agreement) and draws a reproducible random sample (`audit` in the config: `sample`, `seed`, `max_risk`). Review the
+   scenes over `max_risk` and the random sample; the batch is accepted when none is over `max_risk` after the fixes.
 1. `./autolabel run <config>` (or `./autolabel debug <config> [--scene ID ...]`)
    -> `output/<name>/debug/scenes/<scene>/`
+   - `review.html` (**start here**): open it in a browser. The ortho image with the vectors (drag: pan, wheel: zoom);
+     click an element to drop it or change its kind / type / style / arrow directions, "add arrow" + two clicks (tail,
+     tip) adds a missed arrow, the camera sheets are on the right. "Save review json" downloads `<scene>.json`, already
+     merged with the fixes of the existing file: put it into the review directory (step 3).
    - `sample_<k>.jpg`: labels drawn on every camera image + the BEV (raster + vectors).
      Overlay colours: road green, lane marking red, crosswalk magenta, curb blue, sidewalk yellow, manhole cyan.
      Labels are drawn where rays meet the road surface, so they also appear on cars and buildings (occlusion is not
@@ -28,7 +36,8 @@ fix files).
    - Are zebra zones, red-and-white crosswalks, text and arrows of the right kind?
    - Lines that do not exist (shadows, patched asphalt, tyre marks) or missing lines.
    - In the BEV: are lane lines correctly dashed / solid?
-3. Write the result to `review/<name>/<scene>.json` (directory: config `review_dir`). Scenes without a file are unreviewed.
+3. Put the result into `review/<name>/<scene>.json` (directory: config `review_dir`), saved by review.html or written
+   by hand (format below). Scenes without a file are unreviewed.
 4. `./autolabel run <config>` applies the fixes (only vectorize and later steps are redone).
 
 ## review/<name>/<scene>.json
