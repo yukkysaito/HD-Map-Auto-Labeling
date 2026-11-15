@@ -1,77 +1,82 @@
-# HD-Map-Auto-Labeling — rosbag から HD Map 学習データを自動生成する
+# HD-Map-Auto-Labeling
 
-rosbag（カメラ・自己位置・公式キャリブレーション）と LiDAR 点群地図から、マルチカメラ・複数フレーム入力の
-オンライン HD Map 推定モデル用の教師データを作る。教師データの中身は次の通り。
-- ラスタ（車道・白線・横断歩道・縁石・歩道…）
-- 3D ベクトル（車線の線、横断歩道、縁石、道路境界、**右左折の矢印と進行可能方向**）
+Automatic generation of HD-map training data from rosbags.
 
-**HD Map（lanelet2 / ベクタ地図）は使わない。** 平面路面も仮定しないので、坂・立体交差・高架の下でも成り立つ。
+From rosbags (cameras, localization, the vehicle's official calibration) and a LiDAR point cloud map, this tool builds
+ground truth for online HD-map models that take multi-camera, multi-frame input:
+- raster labels (road, lane markings, crosswalks, curbs, sidewalks, ...)
+- 3D vectors (lane lines, crosswalks, curbs, road boundaries, **turn arrows with their allowed directions**)
 
-## 必要なもの
-- 入力
-  - rosbag（mcap、ROS 2）: カメラ画像（CompressedImage）と camera_info、自己位置（Odometry、地図座標の base_link）、/tf_static。
-    車速（VelocityReport）は任意。トピック名とカメラは `configs/default.yaml` で設定する（既定は Autoware の名前）。
-  - LiDAR の点群地図（.pcd）。自己位置と同じ地図座標のもの。
-- 環境: Linux、CUDA の使える NVIDIA GPU（12 GB で動作確認）、Python 3.11。セットアップは [env/README.md](env/README.md)。
-  セグメンテーションのモデル（Mask2Former, Mapillary Vistas）は初回に Hugging Face から自動で取得される。
+**No HD map (lanelet2 / vector map) is used.** No flat-ground assumption either: slopes, overpasses and roads under
+elevated structures are handled.
 
-## 使い方
+## Requirements
+- Input
+  - rosbags (mcap, ROS 2): camera images (CompressedImage) + camera_info, localization (Odometry of base_link in the map
+    frame), /tf_static. Vehicle speed (VelocityReport) is optional. Topic names and cameras are set in
+    `configs/default.yaml` (defaults: Autoware names).
+  - a LiDAR point cloud map (.pcd) in the same map frame as the localization.
+- Environment: Linux, an NVIDIA GPU with CUDA (tested with 12 GB), Python 3.11. Setup: [env/README.md](env/README.md).
+  The segmentation model (Mask2Former, Mapillary Vistas) is downloaded from Hugging Face on first use.
+
+## Usage
 ```bash
-./autolabel run --map /data/pointcloud_map.pcd --logs "/data/logs/*" --name my_area   # bag → 学習データ + デバッグ出力
-./autolabel status --name my_area                                                      # 何が終わり、何が失敗したか
-./autolabel test                                                                       # 単体テスト
+./autolabel run --map /data/pointcloud_map.pcd --logs "/data/logs/*" --name my_area   # bags -> training data + debug output
+./autolabel status --name my_area                                                      # what is done, what failed
+./autolabel test                                                                       # unit tests
 ```
-- `--logs`: glob。ディレクトリ 1 つ（中の `*.mcap` 全部）または `.mcap` ファイル 1 つが 1 走行になる。
-- bag に /tf_static が無い場合は、キャリブレーションのファイルを `--tf-static` で渡す（形式は `configs/default.yaml`）。
-- 毎回同じ指定をするなら設定ファイルにまとめる: `configs/example.yaml` をコピーして編集し、`./autolabel run my_area.yaml`。
-  書いた項目だけが `configs/default.yaml` を上書きする。コマンドラインの指定はさらにそれを上書きする。
-- **ログの追加**: `logs` の場所に新しいログを置いて `run` するだけでよい。
-- **再開と再処理**: 終わった処理は飛ばし、入力・設定が変わったものと失敗したものだけをやり直す。
-  1 本の bag やシーンが失敗しても、他は続行する（終了コード 1、`status` に失敗とログの場所）。
-- **範囲を絞る**: `--drive` / `--scene` で対象を絞れる。`--force` で強制的にやり直す。
-- **大量処理**: `--no-debug`（または設定の `debug: false`）でデバッグ出力を止め、`prune_frames: true` で容量を抑える。
-  並列数は `jobs`。
+- `--logs`: globs. A directory (all `*.mcap` in it) or a single `.mcap` file is one drive.
+- Bags without /tf_static: pass a calibration file with `--tf-static` (format: see `configs/default.yaml`).
+- For repeated runs put the settings in a config: copy `configs/example.yaml`, edit it, `./autolabel run my_area.yaml`.
+  Only the keys you write override `configs/default.yaml`; command-line options override both.
+- **Adding logs**: put new logs where `logs` points and `run` again.
+- **Resume / redo**: finished work is skipped; only what changed (inputs, settings) or failed is redone. A failing bag
+  or scene does not stop the others (exit code 1, `status` lists the failures and their logs).
+- **Subsets**: `--drive` / `--scene` restrict the work, `--force` redoes it.
+- **Large runs**: `--no-debug` (or `debug: false`) disables debug output, `prune_frames: true` saves disk space,
+  `jobs` sets the parallelism.
 
-## 出力（`output/<name>/`、`--output` / 設定 `output` で変更可）
+## Output (`output/<name>/`, change with `--output` / `output`)
 ```
-dataset/                    学習データだけ（docs/DATASET.md）。このディレクトリだけを学習機に持っていけばよい
-  dataset.json              入口: クラス・ベクトルクラス・既定の BEV・シーン一覧（train / val は場所で分割）・元 bag
-  <scene>/map.npz           ラベル（地図座標のラスタ 0.1 m + 路面の高さ）
-  <scene>/vectors.geojson   3D ベクトル（地図座標）
-  <scene>/samples.jsonl     サンプル: 時刻・自車姿勢・各カメラの現在 / 過去フレーム・QA・元の bag と時刻
-  <scene>/frames.jsonl, images/cam<N>/  入力画像（歪み補正済み）とその姿勢
-debug/                      確認用（消してよい / 無効化できる）
-  scenes/<scene>/           レビュー用シート（カメラ画像へのラベル重ね描き、地図、矢印一覧）、プレビュー、
-                            PCD（LiDAR 路面点・ラベル・ベクトル）、LiDAR との幾何チェック
+dataset/                    training data only (docs/DATASET.md); this directory is all a training machine needs
+  dataset.json              entry point: classes, vector classes, default BEV, scenes (train / val split by location), source bags
+  <scene>/map.npz           labels (map-frame raster, 0.1 m, + road surface height)
+  <scene>/vectors.geojson   3D vectors (map frame)
+  <scene>/samples.jsonl     samples: time, ego pose, current / past frames per camera, QA, source bag and time
+  <scene>/frames.jsonl, images/cam<N>/  input images (undistorted) and their poses
+debug/                      for checking (may be deleted / disabled)
+  scenes/<scene>/           review sheets (labels drawn on the camera images, map, arrow list), previews,
+                            PCDs (LiDAR ground points, labels, vectors), geometric check against the LiDAR map
   logs/, dataset_stats.json, qa/, eval/
-work/                       再開用の中間データ（走行ごとの画像・姿勢・セグメンテーション・キャリブ、シーンごとの路面・ラベル）
-status.json                 処理単位ごとの成否・メモ・ログ
+work/                       intermediate data for resuming (per drive: images, poses, segmentation, calibration; per scene: surface, labels)
+status.json                 success / failure, notes and log of every work item
 ```
-学習側の参照ローダ: `hdlabel/loader.py`。範囲と解像度はローダで自由に選べる（ラベルは地図座標で 1 回だけ持つ）。
+Reference loader for training: `hdlabel/loader.py`. The BEV range and resolution are chosen in the loader (labels are
+stored once, in map coordinates).
 
-## 仕組み（`hdlabel/steps/`）
-| 処理 | 中身 |
+## How it works (`hdlabel/steps/`)
+| Step | What it does |
 |---|---|
-| `ingest.py` | bag を 1 回読み、次のことをする。<br>・画像を 1/2 に縮小し、歪み補正して保存する。<br>・自己位置・車速・/tf_static を保存する。<br>・各 bag の時間範囲（元 bag の追跡用）を記録する。<br>・不正データを検出する（自己位置の欠落・跳び、カメラのコマ落ち、壊れた bag や画像は読める所まで使って記録）。<br>・キーフレーム（0.5 m ごと）を選ぶ。 |
-| `segment.py` | キーフレームを Mask2Former（Mapillary Vistas）でセグメンテーションする。 |
-| scenes（`run.py`） | 走行を、地図座標の固定の 300 m グリッドのマスごとにシーンに分ける。<br>・ラベル範囲は、その経路の前後 150 m と横 40 m（BEV の前方まで教師が入る）。<br>・同じ経路を走った別の走行のシーンは、ラベルを共有する（計算は 1 回）。 |
-| `time_offset.py` | カメラ画像の時刻ずれを推定する。曲がっているときの白線のぶれが最小になるずれを探す。外部パラメータは公式値をそのまま使う。 |
-| `map_surface.py` | 点群地図から自車の走る階層の路面 3D 形状を作る（`hdlabel/surface.py`）。<br>・点を高さの層に分ける。<br>・走行軌跡から段差の小さい層だけをたどって選ぶ。<br>・そのため、高架の下では地面、橋の上では橋面になり、別の階層は混ざらない。 |
-| `project_labels.py` | 全走行・全カメラのセグメンテーションを光線として路面に交差させ（GPU）、0.1 m セルに投票する。<br>・融合するのは、同じ階層を走った走行だけ。<br>・別の階層にいた瞬間のフレームは使わない。 |
-| `arrows.py` | 矢印ごとに、近い（2.5〜11 m）カメラ画像から 2 cm 解像度の鮮明な路面パッチを作る。<br>・実物から切り出した型（直進・右折・直進+左折）と照合し、向きと進行可能方向を決める（`hdlabel/arrowshape.py`）。<br>・ラスタは、測った輪郭で描き直す。 |
-| `vectorize.py` | ラベル地図から次のベクトルを作る。<br>・白線（実線 / 破線、塗装区間）<br>・横断歩道<br>・縁石<br>・道路境界（本物の境界か、観測範囲の端か）<br>・走行可能領域<br>・矢印<br>レビュー修正（`review/<area>/*.json`、地図座標）を適用する。 |
-| `export.py` | 学習データを書き出す。サンプルは基準カメラの時刻で、train は 0.5 s、val は 0.1 s 間隔（毎周期の評価用）。<br>QA で次の場合を不合格にする。<br>・近距離が未観測<br>・時刻ずれの推定失敗<br>・自己位置の欠落<br>・レビューで却下 |
-| `review.py`, `geom_check.py` | デバッグ出力を作る（`docs/ANNOTATION.md`）。<br>・カメラ画像にラベルを重ねたシート、地図、矢印一覧<br>・LiDAR の段差と縁石の位置の照合、ベクトルの高さと LiDAR 地面の照合（カメラと独立な幾何チェック）<br>・PCD |
+| `ingest.py` | Reads the bags once:<br>- images scaled (1/2) and undistorted<br>- localization, vehicle speed, /tf_static<br>- time range of every bag (to trace samples back to their bag)<br>- data checks: localization gaps / jumps, dropped camera frames; broken bags or images are used up to the error, which is recorded<br>- keyframes (every 0.5 m) |
+| `segment.py` | Semantic segmentation of the keyframes with Mask2Former (Mapillary Vistas). |
+| scenes (`run.py`) | Drives are cut into scenes at the lines of a fixed 300 m map grid.<br>- labels cover the route +- 150 m and 40 m to the side (ground truth for the whole BEV ahead)<br>- scenes of other drives on the same route share the labels (computed once) |
+| `time_offset.py` | Estimates each camera's image time offset: the offset that minimises the smear of lane markings while turning. Extrinsics are the official ones, unchanged. |
+| `map_surface.py` | 3D road surface of the vehicle's road level from the point cloud map (`hdlabel/surface.py`):<br>- points are split into height layers<br>- only layers connected to the trajectory by small steps are kept<br>- so under an overpass the surface is the ground, on a bridge the deck; other levels never mix |
+| `project_labels.py` | The segmentation of every camera of every drive is cast as rays onto the surface (GPU) and voted into 0.1 m cells.<br>- only drives on the same road level are fused<br>- frames taken while the vehicle was on another level are skipped |
+| `arrows.py` | For every arrow a sharp 2 cm road patch is built from a nearby (2.5-11 m) camera image.<br>- matched against templates cut from real arrows (straight, right, straight + left; mirrored / reversed / scaled automatically) to get the heading and allowed directions (`hdlabel/arrowshape.py`)<br>- the raster is redrawn with the measured outline |
+| `vectorize.py` | Vectors from the label map: lane lines (solid / dashed, painted segments), crosswalks, curbs, road boundaries (real boundary or edge of the observed area), drivable area, arrows. Applies review fixes (`review/<name>/*.json`, map coordinates). |
+| `export.py` | Writes the training data. Samples at the reference camera's times: every 0.5 s for train, 0.1 s for val (per-cycle evaluation).<br>QA fails a sample when: the near range is unobserved, time offset estimation failed, localization is missing, or a reviewer rejected it. |
+| `review.py`, `geom_check.py` | Debug output (`docs/ANNOTATION.md`):<br>- sheets with labels drawn on the camera images, map, arrow list<br>- curbs vs. LiDAR height steps, vector heights vs. LiDAR ground (checks independent of the cameras)<br>- PCDs |
 
-| 文書 | 内容 |
+| Document | Contents |
 |---|---|
-| [docs/DATASET.md](docs/DATASET.md) | 学習データの形式（座標系・ラスタ・ベクトル・複数フレーム入力・ローダ） |
-| [docs/ANNOTATION.md](docs/ANNOTATION.md) | 目視レビューと修正ファイルの書き方 |
-| [docs/MAINTENANCE.md](docs/MAINTENANCE.md) | コード構成、テスト・回帰確認、既知の制約、落とし穴 |
-| [env/README.md](env/README.md) | Python 環境の再現 |
+| [docs/DATASET.md](docs/DATASET.md) | Training data format (frames, raster, vectors, multi-frame input, loader) |
+| [docs/ANNOTATION.md](docs/ANNOTATION.md) | Visual review and review fix files |
+| [docs/MAINTENANCE.md](docs/MAINTENANCE.md) | Code structure, tests and regression checks, known limitations, pitfalls |
+| [env/README.md](env/README.md) | Python environment |
 
-設定はすべて `configs/default.yaml`（各項目にコメントあり）。特定の場所のパス・キャリブレーション・レビュー結果は
-`configs/local/` と `review/` に置けば git に入らない。
+All settings are in `configs/default.yaml` (commented). Site-specific paths, calibration files and review results can
+live in `configs/local/` and `review/`, which git ignores.
 
-## ライセンス
-Apache License 2.0（[LICENSE](LICENSE)）。
+## License
+Apache License 2.0 ([LICENSE](LICENSE)).

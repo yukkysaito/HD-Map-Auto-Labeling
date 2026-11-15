@@ -1,33 +1,35 @@
-# レビュー（目視確認とアノテーション修正）
+# Review (visual check and annotation fixes)
 
-自動ラベルの誤りの大部分は幾何ではなくセグメンテーション（画像の意味分類）から来る。
-例: ゼブラ帯（導流帯）の領域全体が「白線」になる、赤白の横断歩道が「白線」になる、植生の盛り上がりに高さが引っ張られる。
-これは 2 走行の一致度では測れない（両方に同じ誤りが出る）ので、画像を見て確認する。
-確認するのは人でも Claude でもよい（Claude Code は画像を読めるので、シートを読ませて判定・修正ファイルを書かせられる）。
+Most errors of the automatic labels come from the segmentation (image semantics), not from the geometry. Examples:
+a whole zebra (channelizing) zone becomes "lane marking", a red-and-white crosswalk becomes "lane marking", raised
+vegetation pulls the height. Agreement between two drives cannot measure this (both have the same error), so the
+images are checked. The reviewer can be a person or a vision-capable LLM agent (it can read the sheets and write the
+fix files).
 
-## 手順
-1. `./autolabel run <config>`（または `./autolabel debug <config> [--scene ID ...]`）
-   → `output/<name>/debug/scenes/<scene>/`
-   - `sample_<k>.jpg`: 各カメラ画像にラベルを重ねたもの + BEV（ラスタ + ベクトル）。
-     重ね色: 車道 緑、白線 赤、横断歩道 マゼンタ、縁石 青、歩道 黄、マンホール 水色。
-     ※ 路面との交差で描くので、車や建物の上にも路面ラベルが描かれる（隠れは考慮しない）。そこは誤りではない。
-   - `map.jpg`: シーンのオルソ画像 + ベクトル + 要素番号 + 10 m グリッド（地図座標、50 m ごとに数値）。
-   - `elements.jpg`: 面の要素（marking_area・crosswalk）を 1 つずつ切り出したオルソ画像（番号・面積・切り出し幅付き）。
-     **種類の判定はこれを見るのが一番速い**（1 シーン数十個を 1 枚で見られる）。
-   - `arrows.jpg`: 自動で見つけた矢印（近いカメラ画像から作った鮮明な路面パッチ + 輪郭 + 判定 S/L/R/SL/SR とスコア）。
-   - `elements.json`: 要素番号 → 種類・属性・要素上の 1 点（地図座標）。
-   - `preview_<k>.jpg`: 基準カメラ画像 + 学習データの BEV（ラスタ + ベクトル、矢印は輪郭と方向）。
-   - `geom_check.jpg` / `.json`: LiDAR 地図との幾何チェック（縁石の位置に LiDAR の段差があるか: 青 = ある、赤 = ない。
-     横断歩道の切り下げ部は段差がないので赤で正しい。ベクトルの高さと LiDAR 地面の差）。
-   - `map_ground.pcd`（LiDAR の路面点）、`labels.pcd`（ラベル、rgb + label）、`vectors.pcd`（ベクトル、rgb + kind）:
-     PCD ビューア（CloudCompare など）で重ねると、ラベルの位置・高さを 3D で確認できる。
-2. 見る観点
-   - カメラ画像上で、赤（白線）が実際の白線に乗っているか（ずれ = 時刻ずれ・キャリブ異常）。
-   - ゼブラ帯・赤白横断歩道・文字・矢印が正しい種類になっているか。
-   - 存在しない線（影、補修跡、タイヤ痕）や、抜けている線。
-   - BEV で車線の線が破線/実線として正しいか。
-3. 結果を `review/<name>/<scene>.json`（設定 `review_dir` で変更可）に書く（無いシーンは未レビュー扱い）。
-4. `./autolabel run <config>` → 修正が反映される（vectorize 以降だけがやり直される）。
+## Procedure
+1. `./autolabel run <config>` (or `./autolabel debug <config> [--scene ID ...]`)
+   -> `output/<name>/debug/scenes/<scene>/`
+   - `sample_<k>.jpg`: labels drawn on every camera image + the BEV (raster + vectors).
+     Overlay colours: road green, lane marking red, crosswalk magenta, curb blue, sidewalk yellow, manhole cyan.
+     Labels are drawn where rays meet the road surface, so they also appear on cars and buildings (occlusion is not
+     modelled). That is not an error.
+   - `map.jpg`: ortho image of the scene + vectors + element numbers + 10 m grid (map coordinates, labelled every 50 m).
+   - `elements.jpg`: every area element (marking_area, crosswalk) cut out of the ortho image (number, area, crop width).
+     **The fastest way to check element types** (tens of elements of a scene in one image).
+   - `arrows.jpg`: arrows found automatically (sharp road patch from a nearby camera image + outline + S/L/R/SL/SR + score).
+   - `elements.json`: element number -> kind, attributes, a point on the element (map coordinates).
+   - `preview_<k>.jpg`: reference camera image + the BEV of the training data (raster + vectors; arrows with outline and directions).
+   - `geom_check.jpg` / `.json`: geometric check against the LiDAR map (is there a LiDAR height step at the curb:
+     blue = yes, red = no; curb ramps at crosswalks have no step, red is correct there; vector height vs. LiDAR ground).
+   - `map_ground.pcd` (LiDAR ground points), `labels.pcd` (labels, rgb + label), `vectors.pcd` (vectors, rgb + kind):
+     overlay them in a PCD viewer (e.g. CloudCompare) to check positions and heights in 3D.
+2. What to look at
+   - In the camera images: does the red (lane marking) lie on the real paint? (offset = time offset / calibration problem)
+   - Are zebra zones, red-and-white crosswalks, text and arrows of the right kind?
+   - Lines that do not exist (shadows, patched asphalt, tyre marks) or missing lines.
+   - In the BEV: are lane lines correctly dashed / solid?
+3. Write the result to `review/<name>/<scene>.json` (directory: config `review_dir`). Scenes without a file are unreviewed.
+4. `./autolabel run <config>` applies the fixes (only vectorize and later steps are redone).
 
 ## review/<name>/<scene>.json
 ```json
@@ -35,43 +37,47 @@
   "reviewer": "alice",
   "date": "2026-01-01",
   "verdict": "ok",
-  "notes": "cam10 側方の縁石が 20 m 先で少し太い。それ以外は良好。",
+  "notes": "curb on the cam10 side slightly too wide 20 m ahead, otherwise good",
   "reject": false,
   "reject_samples": [1793863477914273793],
   "fixes": [
     {"kind": "marking_area", "at": [1023.4, 2567.8], "set": {"type": "zebra"}},
-    {"kind": "lane_line",    "at": [1050.1, 2580.2], "drop": true, "why": "影"},
+    {"kind": "lane_line",    "at": [1050.1, 2580.2], "drop": true, "why": "shadow"},
     {"kind": "lane_line",    "at": [1060.0, 2590.0], "set": {"style": "dashed"}}
   ]
 }
 ```
-- `reject: true` → シーン全体の全サンプルが `qa.ok = false`（学習から外れる）。`reject_samples` は個別のサンプル（stamp）。
-- `fixes`: `at` は地図座標（`elements.json` の `at` をそのまま使える）。その種類の要素のうち `at` に一番近いもの（1.5 m 以内）に適用。
-  `drop: true` で削除、`set` で属性を上書き（`reviewed: true` が付く）。`"set": {"kind": "crosswalk"}` で種類自体を変えられる
-  （例: 赤白の横断帯がセグメンテーションで白線になっている場合）。
-- **修正は地図座標なので、同じ場所を写す他のシーン（他の走行）にも自動で適用される**（エリアの review ファイルを全部見る）。
-  1 回レビューすれば、同じ経路を何度走っても効く。ただし別走行のベクトルは形が少し違うので、1.5 m 以内に同じ種類の
-  別の要素があるとそちらに当たることがある。
-- `marking_area` の `type` の値（例）: `zebra`（導流帯・ゼブラ）、`stop_line`、`arrow`
-  （矢印・自転車レーンの矢羽根）、`text`（路面文字）、`parking`（駐車枠）、`double_line`（黄色の二重線が太い面になったもの）、
-  `diamond`（横断歩道予告）、`other`（判読できない小片）。crosswalk の `type`: `red_white`。
-- 矢印（`kind: "arrow"`）: `arrows.jpg`（先端が上、運転者の左が左。番号 n は `map.jpg` の `A<n>`）で進行方向を確認し、
-  間違いは `{"kind": "arrow", "at": [x, y], "set": {"directions": ["straight", "right"], "shape": "SR"}}`、
-  矢印でないもの（自転車レーンの矢印など）は `"drop": true`。
-  見落とした矢印（車に隠れていた、など）は追加できる:
-  `{"kind": "arrow", "add": {"tail": [x, y], "tip": [x, y], "directions": ["right"]}}`（地図座標。`map.jpg` の 10 m グリッドで読む）。
-  - 追加した矢印も、指定した軸の周りの鮮明な路面パッチから、輪郭と長さを測り直す。
-  - 向きは、`directions` を省けば型との照合で決まり、書けばその値になる。
-  - `arrows.json` では `auto: false`（レビューで追加したもの）として記録される。`at` は `elements.json` の arrow の `at`（尾と先端の中点）。
-- ラベル地図（ラスタ）そのものは直さない。ラスタの誤りが大きい場合はそのシーン／サンプルを reject する。
+- `reject: true`: every sample of the scene gets `qa.ok = false` (excluded from training). `reject_samples`: single samples (stamps).
+- `fixes`: `at` is in map coordinates (the `at` of `elements.json` can be used as is). The fix applies to the element
+  of that kind nearest to `at` (within 1.5 m). `drop: true` deletes it, `set` overwrites attributes (`reviewed: true`
+  is added). `"set": {"kind": "crosswalk"}` changes the kind itself (e.g. a red-and-white crosswalk segmented as
+  lane marking).
+- **Fixes are in map coordinates, so they also apply to other scenes (other drives) showing the same place** (all
+  review files of the output are read). One review covers every later drive of the route. Vectors of another drive
+  differ slightly, so another element of the same kind within 1.5 m may be hit instead.
+- Example `type` values of `marking_area`: `zebra` (channelizing zone), `stop_line`, `arrow` (arrows, bicycle lane
+  chevrons), `text` (road text), `parking` (parking bays), `double_line` (a yellow double line merged into an area),
+  `diamond` (crosswalk ahead), `other` (unreadable fragments). Crosswalk `type`: `red_white`.
+- Arrows (`kind: "arrow"`): check the directions in `arrows.jpg` (tip up, driver's left on the left; number n is
+  `A<n>` in `map.jpg`). Fix a wrong one with
+  `{"kind": "arrow", "at": [x, y], "set": {"directions": ["straight", "right"], "shape": "SR"}}`;
+  drop non-arrows (e.g. bicycle lane arrows) with `"drop": true`.
+  Missed arrows (e.g. hidden by a car) can be added:
+  `{"kind": "arrow", "add": {"tail": [x, y], "tip": [x, y], "directions": ["right"]}}` (map coordinates, read from the
+  10 m grid of `map.jpg`).
+  - Added arrows are measured again (outline, length) from a sharp road patch around the given axis.
+  - Without `directions` the directions come from template matching; with it, from the given value.
+  - In `arrows.json` they are recorded with `auto: false`. The `at` of an arrow in `elements.json` is the midpoint of tail and tip.
+- The label raster itself is not edited. If the raster is badly wrong, reject the scene / samples.
 
-## 目安
-1 シーン数分（elements.jpg 1 枚 + sample 1〜2 枚を見る）。修正は地図座標なので、bag から取り込み直して
-走行名・シーン名が変わっても、そのまま効く。
-`elements.jpg` には、まだレビューされていない要素だけが出る。
+## Effort
+A few minutes per scene (one `elements.jpg` + one or two `sample` images). Fixes are in map coordinates, so they stay
+valid when the bags are ingested again and drive / scene names change. `elements.jpg` only shows elements not yet
+reviewed.
 
-## 方針
-- 全シーンを見る必要はない。まず各エリアの数シーン（曲がり・交差点・坂を優先）を見て、系統的な誤りを見つける。
-  系統的な誤りはパラメータ・処理の改善で直す（`docs/MAINTENANCE.md` の既知の問題に追記）。
-- review ファイルは手作業の成果物なので、消さずにバージョン管理する（`output/` は再生成できるが review はできない）。
-  地域のデータなので、このリポジトリには入れない（`review/` は .gitignore 済み）。`review_dir` で自分のリポジトリを指せる。
+## Policy
+- Not every scene needs a review. Start with a few scenes per area (turns, intersections and slopes first) to find
+  systematic errors, and fix those in the parameters / processing (add them to the known issues in `docs/MAINTENANCE.md`).
+- Review files are manual work: keep them under version control (`output/` can be regenerated, reviews cannot). They
+  are site data, so they do not belong in this repository (`review/` is git-ignored); point `review_dir` at your own
+  repository.

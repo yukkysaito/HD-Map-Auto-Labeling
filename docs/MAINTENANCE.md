@@ -1,148 +1,160 @@
-# メンテナンスメモ（メンテナー / レビュワー向け）
+# Maintenance notes (for maintainers / reviewers)
 
-## コード構成
-| ファイル | 役割 |
+## Code structure
+| File | Role |
 |---|---|
-| `autolabel` | 入口（`./autolabel <cmd> [config.yaml] [--map ...] [--logs ...]`、`./autolabel test`）。ROS の PYTHONPATH を切って `.venv` で実行する |
-| `configs/default.yaml` | 全設定の既定値（トピック・カメラ・シーン・データセット・並列数）。プロジェクトの設定（`configs/example.yaml`）とコマンドラインで上書きする |
-| `hdlabel/run.py` | 手順の制御を担う。<br>・並列実行（GPU 処理はセマフォで制限）<br>・再開と、失敗の隔離（`status.json`）<br>・シーンの分割、階層を考慮した走行の選択<br>・train / val の分割<br>・`dataset.json` の作成 |
-| `hdlabel/common.py` | クラス定義（Vistas ID → ラベル）、姿勢の補間、外部パラメータ、元 bag の追跡、BEV デバッグ描画 |
-| `hdlabel/surface.py` | 点群地図の読み書き（PCD）と、階層を考慮した路面（層 + 連結 Dijkstra） |
-| `hdlabel/mapproj.py` | 路面への投影（GPU）。光線と高さ場の交差、投票、カメラ画像へのラベル描画、接地補正と別階層の判定 |
-| `hdlabel/arrowshape.py` | 矢印の塗装の切り出しと、テンプレート照合（`hdlabel/assets/arrow_templates.npz`） |
-| `hdlabel/bev.py` | 地図座標のラベルから、自車座標の BEV ラスタとベクトルを作る（export・ローダ・レビューで共通） |
-| `hdlabel/loader.py` | 学習用の参照 Dataset（PyTorch） |
-| `hdlabel/steps/*.py` | 各処理（単体でも実行できる。引数は `-h`）。処理同士はファイルでだけつながる |
-| `hdlabel/eval/` | `compare_labels` / `compare_vectors`: 2 走行の再現性（`./autolabel qa`）。<br>`dataset_stats`: データセットの統計。<br>`train_smoke` / `online_eval`: 学習できることの確認と、毎周期の評価 |
-| `tests/` | 単体テスト（`./autolabel test`、約 5 秒） |
+| `autolabel` | Entry point (`./autolabel <cmd> [config.yaml] [--map ...] [--logs ...]`, `./autolabel test`). Drops a ROS PYTHONPATH and runs in `.venv` |
+| `configs/default.yaml` | Defaults of every setting (topics, cameras, scenes, dataset, parallelism). Overridden by a project config (`configs/example.yaml`) and the command line |
+| `hdlabel/run.py` | Pipeline control:<br>- parallel execution (GPU steps limited by a semaphore)<br>- resume and failure isolation (`status.json`)<br>- scene splitting, choice of drives on the same road level<br>- train / val split<br>- `dataset.json` |
+| `hdlabel/common.py` | Class definitions (Vistas ids -> labels), pose interpolation, extrinsics, source bag tracing, BEV debug drawing |
+| `hdlabel/surface.py` | Point cloud map I/O (PCD) and the multi-level road surface (height layers + connectivity Dijkstra) |
+| `hdlabel/mapproj.py` | Projection onto the surface (GPU): ray / height field intersection, voting, drawing labels into camera images, ground snapping and other-level detection |
+| `hdlabel/arrowshape.py` | Arrow paint extraction and template matching (`hdlabel/assets/arrow_templates.npz`) |
+| `hdlabel/bev.py` | Ego-frame BEV raster and vectors from the map-frame labels (shared by export, loader and review) |
+| `hdlabel/loader.py` | Reference training Dataset (PyTorch) |
+| `hdlabel/steps/*.py` | The processing steps (each runs standalone, see `-h`). Steps are connected only through files |
+| `hdlabel/eval/` | `compare_labels` / `compare_vectors`: repeatability between two drives (`./autolabel qa`).<br>`dataset_stats`: dataset statistics.<br>`train_smoke` / `online_eval`: learnability check and per-cycle evaluation |
+| `tests/` | Unit tests (`./autolabel test`, about 5 s) |
 
-約束ごと
-- ラベル ID とパレットは `common.CLASSES` / `PALETTE` だけで定義する。
-- 自車座標への変換は `bev.SceneMap` だけで行う（重複実装しない）。
-- データ形式を変えたら、`docs/DATASET.md` と `dataset.json` の `format` を更新する。
-- 設定値はコードに書かず `configs/default.yaml` に置く。特定の場所・車両・ログのパスはリポジトリに入れない（`configs/local/`、`review/` は .gitignore 済み）。
+Conventions
+- Label ids and the palette are defined only in `common.CLASSES` / `PALETTE`.
+- Transforms to the ego frame only go through `bev.SceneMap` (no second implementation).
+- When the data format changes, update `docs/DATASET.md` and the `format` of `dataset.json`.
+- Settings go to `configs/default.yaml`, not into code. No site, vehicle or log paths in the repository
+  (`configs/local/` and `review/` are git-ignored).
 
-### 再開・やり直しの判定（`run.py` の `step()`）
-各処理は、次の3条件がそろえば飛ばす。
-- 出力がすべてある
-- 出力が入力より新しい
-- 引数が前回成功時と同じ（`work/stamps/<tag>.json`）
+### Resume / redo (`step()` in `run.py`)
+A step is skipped when
+- all its outputs exist
+- the outputs are newer than the inputs
+- its arguments equal those of the last successful run (`work/stamps/<tag>.json`).
 
-設定や入力（走行の追加、キャリブ、レビュー修正）が変わると、影響する処理だけがやり直される。
-失敗した処理は印が消えるので、次の `run` で再実行される。走行の失敗は、その走行のシーンにだけ波及する。
+When settings or inputs change (new drives, calibration, review fixes) only the affected steps are redone. A failed
+step loses its stamp and runs again on the next `run`. A failed drive only affects its own scenes. Steps that may
+rewrite an input of later steps write a file only when its content changes (e.g. `ingest.py`), so a rerun does not
+cascade.
 
-## 変更したら確認すること
-1. `./autolabel test` が全部通る。`.venv/bin/python -m pyflakes hdlabel tests` が何も出さない。
-2. 通し試験（約 3 分）: 1 分程度の bag 1 本と、壊した bag 2 本で回す。設定の例（`configs/local/e2e.yaml` など、リポジトリには入れない）:
+## Checks after a change
+1. `./autolabel test` passes and `.venv/bin/python -m pyflakes hdlabel tests` prints nothing.
+2. End-to-end test (about 3 min): one ~1-minute bag plus two broken bags. Example config (e.g. `configs/local/e2e.yaml`,
+   not versioned):
    ```yaml
    name: _e2e_test
    pointcloud_map: /path/to/pointcloud_map.pcd
    drives:
      good: {bags: /path/to/one_minute.mcap}
-     truncated: {bags: output/_e2e_bags/truncated.mcap}   # head -c 420000000 <別の bag> > output/_e2e_bags/truncated.mcap
+     truncated: {bags: output/_e2e_bags/truncated.mcap}   # head -c 420000000 <another bag> > output/_e2e_bags/truncated.mcap
      empty: {bags: output/_e2e_bags/empty.mcap}           # : > output/_e2e_bags/empty.mcap
    scenes: {length_m: 200, context_m: 60, corridor_m: 40}
    calib: {scenes: 1}
    ```
-   終わったら `rm -rf output/_e2e_test output/_e2e_bags`。
-   - 正常な bag（1 分、/tf_static 無し）: 学習データとデバッグ出力までできる。短いので、時刻ずれが coarse になるのは正常。
-   - 途中で切れた bag: 読めるところまで取り込み、`ingest.json` の `errors` に記録される。
-   - 0 バイトの bag: その走行だけが失敗になる。他は最後まで進み、`status` に失敗とログが出る（終了コード 1）。
-3. 手元のログ一式（`./autolabel run <config>`）で、次を確かめる。
-   - `status` に失敗が無い。
-   - `debug/scenes/*/geom_check.json` の縁石の LiDAR 段差一致率が下がっていない（基準は下）。
-   - `arrows.jpg` で向きが合っている。
-4. 再現性: `./autolabel qa <config>` で、2 走行の一致率が下がっていない（`debug/qa/summary.json`）。
-5. 学習の通し確認: `.venv/bin/python hdlabel/eval/train_smoke.py output/<name>/dataset/dataset.json` で、
-   全クラスの val IoU が基準（prior）を上回る。データ形式・座標系を変えたら必ず実行する。
-6. 規模試験（大きな変更のとき）: `logs` に 1 分の bag ファイルを並べ（`["/path/to/logs/*/*.mcap"]`、bag 1 本 = 1 走行）、
-   `debug: false`、`prune_frames: true` で回す。
+   Afterwards `rm -rf output/_e2e_test output/_e2e_bags`.
+   - the good bag: training data and debug output are produced. It is short, so `coarse` time offsets are expected.
+   - the truncated bag: ingested up to the break, recorded in `errors` of `ingest.json`.
+   - the empty bag: only this drive fails; everything else finishes and `status` shows the failure and its log (exit code 1).
+3. On a full set of your logs (`./autolabel run <config>`):
+   - `status` shows no failure.
+   - the curb / LiDAR step agreement in `debug/scenes/*/geom_check.json` has not dropped (baseline below).
+   - arrow directions in `arrows.jpg` are right.
+4. Repeatability: `./autolabel qa <config>`; the agreement between two drives has not dropped (`debug/qa/summary.json`).
+5. Learnability: `.venv/bin/python hdlabel/eval/train_smoke.py output/<name>/dataset/dataset.json`; the val IoU of
+   every class beats the prior. Always run it after changing the data format or coordinate frames.
+6. Scale test (for large changes): list 1-minute bag files in `logs` (`["/path/to/logs/*/*.mcap"]`, one bag = one
+   drive) and run with `debug: false`, `prune_frames: true`.
 
-## 基準値（開発に使ったサンプルデータ: 同じ経路の 2 走行・各約 30 分、10 カメラ、2026-11-15）
-下の表の項目のうち、処理・サンプル・時刻ずれ・ラベル共有は、300 m グリッドで区切った 20 シーンでの結果。
-それ以外の項目は、それ以前の 12 シーン構成（走行距離 300 m ごとの区切り）で測った値。
-| 項目 | 値 |
+## Baselines (development sample data: 2 drives of the same route, ~30 min each, 10 cameras, 2026-11-15)
+Processing, samples, time offsets and label sharing are from the 20-scene layout (300 m grid); the other rows were
+measured with the earlier 12-scene layout (a cut every 300 m driven).
+| Item | Value |
 |---|---|
-| 処理 | 全処理が成功（calib 2、シーン 20 のうちラベルを作ったのは 9、共有 11、export 20、debug 20）。キャリブ込みで 35 分 |
-| サンプル | 4032 中 3960 が QA 合格（train 1389、val 2571） |
-| 時刻ずれ | 1 走行の cam8 が +1.0 s、他は 2〜52 ms。精密推定は cam5 / cam6 / cam8、他は reference。<br>推定に使うシーンを変えると、reference のカメラは最大 12 ms 動く（この方式の誤差の目安。10 m/s で約 12 cm）|
-| 縁石と LiDAR の段差 | 一致率 0.71〜0.82（`geom_check.json`） |
-| ベクトルの高さと LiDAR 地面 | 差の中央値 0.7〜1.5 cm、p95 7〜8 cm |
-| 2 走行の再現性（2 シーン） | 一致率 0.93 / 0.94、白線 F 0.92 / 0.92、横断歩道 F 0.97 / 0.97、縁石 F 0.96 / 0.95、白線ベクトル点 F 0.85 / 0.92 |
-| 再実行の再現性 | ラベル（GPU 投影）・ベクトル・学習データとも、バイト単位で一致 |
-| 矢印 | 1 走行で 134 個。全部を `arrows.jpg` で目視し、誤検出 1 個を review で削除。2 走行で個数が一致 |
-| 矢印の取りこぼし（1 シーン） | `--debug-candidates` で候補 200 個のパッチを全部目視。不合格 165 個の中央に車両用の矢印は無かった（自転車レーンの矢羽根は意図どおり除外）。残る見落としは、ラベル地図に一度も現れない矢印（車に隠れたままなど）だけ |
-| 立体交差（実走行） | 地図から、2 走行の軌跡の上 5.4〜10.1 m にある水平な構造物（デッキ・高架）を 8 か所抽出した（うち 5 か所は軌跡の真上）。<br>それらを含む全シーンで、構造物の位置の路面は走行路面から最大 0.61 m 以内（歩道の段差程度）で、構造物は混ざらない |
-| 立体交差（実地図） | 軌跡の真上 5.4 m の歩行者デッキ（595 m²）で確認。<br>・実際の地面の軌跡: デッキの下も地面の路面（8.7 m）で、デッキ（13.9 m）は混ざらない。<br>・デッキ上の仮想軌跡: 路面 52,797 セルがすべて 13.3〜14.2 m で、地面の高さのセルは 0。<br>・同じ XY を 6 m 上で走る仮想の走行は、`scene_drives` の融合対象から外れる |
-| 学習で再現できるか | `train_smoke.py --scenes <1 シーン> --eval-split train --cell 0.4 --steps 2000 --bev -20 60 -30 30 0.2`（6 分）。<br>・loss: 1.00 → 0.15<br>・学習サンプル上の IoU: 車道 0.94、横断歩道 0.92、歩道 0.92、路外 0.88、縁石 0.75、白線 0.59（0.4 m セルでは細い線が粗くなる）<br>・`train_smoke_overfit_examples.png` で、横断歩道・縁石・白線・矢印が同じ位置と形で出る<br>・全 train シーン（1382 サンプル）: `--eval-split train --cell 0.4 --steps 8000`、続けて `--init <その .pt> --steps 10000`（計 2.5 時間）。loss 1.62 → 0.60、IoU 車道 0.75、横断歩道 0.69、歩道 0.64、路外 0.61、縁石 0.52、白線 0.41。全クラスで事前分布を大きく上回り、まだ上昇中（小さなネットなので収束が遅い） |
-| BEV の観測率（前方 110〜150 m） | 約 13% |
-| 時間（RTX 5070） | ・キャリブ: 10 カメラで 13 分、3 カメラで 3 分（1 カメラあたりのフレーム数を 400 から 200 に減らした。時刻ずれの差は 4 ms 以内、確かさの判定も同じ）<br>・label〜debug（12 シーン）: 約 25 分。矢印は 1 シーン 30〜60 秒<br>・review 修正の反映（vectorize 以降）: 6 分 |
+| Processing | every step succeeds (calib 2; of 20 scenes 9 labelled, 11 shared; export 20; debug 20). 35 min including calibration |
+| Samples | 3960 of 4032 pass QA (train 1389, val 2571) |
+| Time offsets | cam8 of one drive +1.0 s, the others 2-52 ms. Fine estimates for cam5 / cam6 / cam8, the others `reference`.<br>Changing the scenes used for the estimate moves `reference` cameras by up to 12 ms (the error of this method; ~12 cm at 10 m/s) |
+| Curbs vs. LiDAR steps | agreement 0.71-0.82 (`geom_check.json`) |
+| Vector height vs. LiDAR ground | median difference 0.7-1.5 cm, p95 7-8 cm |
+| Repeatability between 2 drives (2 scenes) | agreement 0.93 / 0.94, lane marking F 0.92 / 0.92, crosswalk F 0.97 / 0.97, curb F 0.96 / 0.95, lane line vector point F 0.85 / 0.92 |
+| Rerun repeatability | labels (GPU projection), vectors, time offsets and training data are byte-identical |
+| Arrows | 134 in one drive, all checked in `arrows.jpg`; one false positive removed by review. Same count in both drives |
+| Missed arrows (1 scene) | all 200 candidate patches checked (`--debug-candidates`): no vehicle arrow among the 165 rejected ones (bicycle lane chevrons are excluded on purpose). Remaining misses: arrows never appearing in the label map (e.g. hidden by a car the whole time) |
+| Overpasses (real drives) | 8 horizontal structures (decks, elevated roads) 5.4-10.1 m above the trajectories were extracted from the map (5 directly above).<br>In every scene containing them the surface at the structure stays within 0.61 m (a sidewalk step) of the driven surface: the structures do not mix in |
+| Overpasses (real map) | checked at a pedestrian deck 5.4 m directly above the trajectory (595 m²).<br>- real ground trajectory: the surface under the deck is the ground (8.7 m), the deck (13.9 m) does not mix in<br>- virtual trajectory on the deck: all 52,797 surface cells at 13.3-14.2 m, no cell at ground height<br>- a virtual drive at the same XY 6 m higher is excluded from fusion by `scene_drives` |
+| Learnability | `train_smoke.py --scenes <one scene> --eval-split train --cell 0.4 --steps 2000 --bev -20 60 -30 30 0.2` (6 min).<br>- loss 1.00 -> 0.15<br>- IoU on the training samples: road 0.94, crosswalk 0.92, sidewalk 0.92, offroad 0.88, curb 0.75, marking 0.59 (thin lines are coarse in 0.4 m cells)<br>- `train_smoke_overfit_examples.png`: crosswalks, curbs, lane lines and arrows appear at the same place with the same shape<br>- all train scenes (1382 samples): `--eval-split train --cell 0.4 --steps 8000`, then `--init <that .pt> --steps 10000` (2.5 h in total). loss 1.62 -> 0.60, IoU road 0.75, crosswalk 0.69, sidewalk 0.64, offroad 0.61, curb 0.52, marking 0.41; far above the prior for every class and still rising (the small network converges slowly) |
+| BEV observed fraction (110-150 m ahead) | about 13% |
+| Time (RTX 5070) | - calibration: 13 min with 10 cameras, 3 min with 3 cameras (200 frames per camera instead of 400: offsets within 4 ms, same confidence)<br>- label to debug (12 scenes): about 25 min; arrows 30-60 s per scene<br>- applying review fixes (vectorize and later): 6 min |
 
-規模試験（2026-11-15）: 1 分の bag 17 本を、それぞれ 1 走行として投入した。設定はデバッグ出力なし・使わないフレームの自動削除あり。
-- 結果: 1 コマンド 85 分で、取り込み 17・キャリブ 17・シーン 18 がすべて成功した。
-- サンプル: 1789 中 1033 が QA 合格。不合格は、1 分では曲がりが足りず時刻ずれを推定できなかった走行のサンプル。安全側に除外している。
-- 容量: フレームの自動削除で 12.6 GB 減った。デバッグ出力はログと統計だけ（656 KB）。
+Scale test (2026-11-15): 17 one-minute bags, each as its own drive; no debug output, unused frames pruned.
+- Result: one command, 85 min; ingest 17, calibration 17 and 18 scenes all succeeded.
+- Samples: 1033 of 1789 pass QA. The failures are drives too short (1 min) to turn enough for the time offset estimate;
+  they are excluded on purpose.
+- Disk: pruning freed 12.6 GB. Debug output was only logs and statistics (656 KB).
 
-## 幾何の検証のしかた（学習で再現できるかだけで判断しない）
-- **カメラと独立なもの**（`geom_check.py`）
-  - 縁石のベクトルの位置に、LiDAR 地図の高さの段差があるか。
-  - ベクトルの高さと LiDAR の地面点の差。
-  - 点群地図の反射強度は 0 で、点も約 0.6 m 間隔に間引かれている。そのため白線の位置を LiDAR で直接確かめることはできず、
-    縁石の段差で代用している。
-- **カメラ画像との整合**（`review.py` の `sample_*.jpg`）: ラベルを各カメラ画像に描き戻し、白線・縁石が実際の塗装に乗るかを見る。
-  ずれていれば、時刻ずれ・キャリブ・自己位置のどれかの異常。
-- **再現性**（`./autolabel qa`）: 同じ場所を別の走行の画像だけで作ったラベルと比べる。
-- **3D**（`*.pcd`）: LiDAR の路面点・ラベル・ベクトルを PCD ビューアで重ねる。高さ・階層の混入を見る。
+## How the geometry is verified (not only by learnability)
+- **Independent of the cameras** (`geom_check.py`)
+  - is there a LiDAR height step at the curb vectors?
+  - difference between vector heights and LiDAR ground points.
+  - the point cloud map has zero intensity and is thinned to ~0.6 m spacing, so lane markings cannot be checked with
+    LiDAR directly; curb steps are used instead.
+- **Against the camera images** (`sample_*.jpg` of `review.py`): labels drawn back into every camera image; lane
+  lines and curbs must lie on the real paint. An offset means a time offset, calibration or localization problem.
+- **Repeatability** (`./autolabel qa`): labels of the same place made from another drive's images alone are compared.
+- **3D** (`*.pcd`): LiDAR ground points, labels and vectors overlaid in a PCD viewer, to see heights and level mixing.
 
-## 落とし穴（再発しやすい）
-- **向きの約束**
-  - BEV は行 0 = 前方、列 0 = 左。
-  - 矢印パッチは行 = 軸方向、列 = 軸の左。テンプレートは先端が最終行、運転者の左が最終列。
-  - `arrows.jpg` は先端が上、運転者の左が左に回してある。
-  - カメラ画像（パースで斜めに見える）だけで向きを判断しない。
-- **セルの中心**: 格子のセル (i, j) の中心は `lo + (i + 0.5) * res`。テストで高さ場を作るときに、半セルずれやすい。
-- **立体交差**
-  - 路面の層は、走行軌跡から連結しているものだけを選ぶ。高さの帯で選ぶ方式は、遠くの高架を拾うので使わない。
-  - 他の走行は、同じ階層の点がある走行だけを融合する（`scene_drives`）。
-  - 別階層にいた瞬間のフレーム（自己位置 z と路面の差が 1 m 超）は、投影・矢印に使わない（`Camera.on_level`）。
-  - シーンの自車経路そのものが、同じシーン内で上下に交差する場合（らせん状のランプ）は未対応。シーン長を短くして避ける。
-- **矢印の候補**
-  - ゼブラ帯や赤白舗装に接した矢印は、ラベル地図で大きな塊の一部になる。幅の広い部分を削ってから候補にする。
-  - パッチの塗装判定で、赤などの彩度の高い舗装と、描画範囲の縁は塗装から除外する。
-  - パッチ内の横の矢印を新しい候補にできるのは、元の候補だけ。追加された候補にも許すと、隣の矢印を少しずれた中心で
-    追加し返し続けて終わらなくなる（1 シーンで 1 時間止まらなかった）。`arrows.py` は 50 候補ごとに進捗を出す。
-  - テンプレート照合は、まず半分の解像度で全変形を採点し、上位 16 個だけを元の解像度で採点し直す。半分の解像度だけで
-    決めると、逆向きの右折矢印を直進と取り違える。
-  - 鏡像・反転・長さ違いはテンプレートから自動で作る。
-  - 新しい形（3 方向、U ターンなど）は、`arrows.py --debug DIR --debug-candidates` の `arrow_cand_<n>.npz` から切り出して、
-    `arrow_templates.npz` に `<クラス>_<名前>` で足す。
-- **時刻ずれの推定窓**: 窓はシーン本体の区間（`t_range`）にする。ラベル用に前後 150 m 延ばした区間（`route_t`）を使うと、
-  曲がっていないフレームが混ざって曲線が鈍る。鈍ると cam6 / cam8 が採用基準を割り、残りのカメラが cam5 だけを基準に
-  合わされて、10〜30 ms 大きく出た（2026-11-14 に発生）。
-- **時刻ずれ**: 短い走行（1 分）では曲がりが足りず、coarse になる。推定に失敗したカメラ（failed）は融合に使わず、
-  その走行のサンプルは QA 不合格。
-- **光線の交差**: 上り坂へすれすれに向かう光線は固定点が収束しないことがある。収束していない（`conv`）か後ろ向き（t ≤ 0）の
-  光線は捨てる。テストで確認している。
-- **GPU の集計の再現性**: 同じ添字に何度も足す `index_add_` は、GPU 上で足す順番が毎回変わる。float32 だと末尾の桁が揺れ、
-  票が変わってラベルが 1 ピクセル単位で変わることがあった。順番に依存する和は float64 で取ってから戻す（`mapproj.project`）。
-  時刻ずれの推定と、それ以外の処理は、再実行でバイト単位で一致することを確認済み。
-- **ROS 環境**: ROS を source したシェルでは PYTHONPATH に ROS の Python パッケージが入り、pytest などが壊れる。
-  `./autolabel` は PYTHONPATH を外す。
+## Pitfalls (recurring)
+- **Orientation conventions**
+  - BEV: row 0 = ahead, column 0 = left.
+  - Arrow patches: rows along the axis, columns to the left of the axis. Templates: tip at the last row, driver's left
+    at the last column.
+  - `arrows.jpg` is rotated: tip up, driver's left on the left.
+  - Do not judge directions from camera images alone (perspective skews them).
+- **Cell centres**: cell (i, j) is centred at `lo + (i + 0.5) * res`. Easy to get half a cell off when building
+  height fields in tests.
+- **Overpasses**
+  - Surface layers are chosen by connectivity from the trajectory. Choosing by a height band picks up distant
+    elevated roads; do not do it.
+  - Only drives with points on the same level are fused (`scene_drives`).
+  - Frames taken while the vehicle was on another level (localization z more than 1 m from the surface) are not used
+    for projection or arrows (`Camera.on_level`).
+  - A scene whose own route crosses itself vertically (spiral ramps) is not supported; use shorter scenes.
+- **Arrow candidates**
+  - Arrows touching zebra zones or red-and-white pavement become part of a big blob in the label map; wide parts are
+    cut off before taking candidates.
+  - In patches, saturated (e.g. red) pavement and the border of the rendered area are excluded from paint.
+  - Only original candidates may spawn new candidates for arrows next to them in the patch. If spawned candidates may
+    spawn too, neighbouring arrows keep re-adding each other with slightly shifted centres and the step never ends
+    (one scene ran for an hour). `arrows.py` prints progress every 50 candidates.
+  - Template matching scores all variants at half resolution first and re-scores the best 16 at full resolution.
+    Half resolution alone mistakes a reversed right-turn arrow for a straight one.
+  - Mirrored, reversed and scaled variants are generated from the templates.
+  - New shapes (three-way, U-turn, ...) are cut from `arrow_cand_<n>.npz` of `arrows.py --debug DIR --debug-candidates`
+    and added to `arrow_templates.npz` as `<class>_<name>`.
+- **Time offset window**: use the scene itself (`t_range`). The route extended by 150 m for labelling (`route_t`) adds
+  frames that do not turn and blunts the curve; cam6 / cam8 then fell below the acceptance threshold and the other
+  cameras were aligned to cam5 alone, 10-30 ms too large (happened on 2026-11-14).
+- **Time offsets**: short drives (1 min) do not turn enough and end `coarse`. Cameras whose estimate failed are not
+  fused, and the samples of that drive fail QA.
+- **Ray intersection**: rays grazing an uphill slope may not converge to a fixed point. Non-converged (`conv`) and
+  backward (t <= 0) rays are dropped; covered by a test.
+- **Repeatability of GPU sums**: `index_add_` with repeated indices adds in a different order on every GPU run. In
+  float32 the last bits vary, votes change and labels changed by single pixels. Order-dependent sums are taken in
+  float64 and cast back (`mapproj.project`). Time offsets and all other steps were checked to be byte-identical on rerun.
+- **ROS environments**: a shell with ROS sourced puts ROS Python packages on PYTHONPATH, which breaks pytest and
+  others. `./autolabel` drops PYTHONPATH.
 
-## 既知の制約・今後
-- **セグメンテーションの系統誤り**: ゼブラ帯が白線になる、赤白の横断歩道が白線になる、など。review で直す。
-  根本対策はモデルの差し替えか追加学習（review 結果を教師にできる）。
-- **見落とした矢印**: 車に隠れたまま一度もカメラに映らない矢印は、検出できない。白線片として残る。
-  review の `add`（docs/ANNOTATION.md）で追加すれば、鮮明なパッチから測り直して入る。
-  確認方法: 合格スコアを 0.99 にして自動検出を全部止め、既知の右折矢印 1 本を `add` で追加した。その 1 本だけが右折として出て、
-  尾と先端の位置は自動検出と 5 cm 以内で一致した。
-- **停止線**が独立のクラスになっていない（marking_area の `type`）。
-- **同じ経路の繰り返し走行**: 次の条件を満たすシーンは、計算せずにそのラベルを共有する（`run.label_owners`）。
-  - 融合する走行の組が、先に作ったシーンと同じ。
-  - ラベル範囲が、そのシーンの範囲に 5 m の余裕込みで収まる。
+## Known limitations / future work
+- **Systematic segmentation errors**: zebra zones and red-and-white crosswalks become lane markings, etc. Fixed by
+  review; the real fix is another model or fine-tuning (review results can serve as ground truth).
+- **Missed arrows**: an arrow hidden by a car the whole time is never seen by a camera and cannot be detected; it
+  stays as lane line fragments. Adding it with a review `add` (docs/ANNOTATION.md) measures it from a sharp patch.
+  Verified by disabling automatic detection (acceptance score 0.99) and adding one known right-turn arrow: exactly that
+  arrow came out as a right turn, tail and tip within 5 cm of the automatic detection.
+- **Stop lines** are not a class of their own (`type` of marking_area).
+- **Repeated drives of a route**: a scene reuses the labels of an earlier scene without computing them when
+  - it fuses the same set of drives, and
+  - its label box lies inside the earlier scene's box, with a tolerance of `scenes.share_tolerance_m` (default 20 m).
 
-  シーンは固定の地図グリッド（`length_m` 四方）で区切る（`run.tile_runs`）。走り始めの位置が違う走行でも、同じ道のシーンは同じマスにそろう。
-  サンプルデータでは 20 シーン中 11 が共有になった（同じ走行が同じ場所に戻った区間を含む）。サンプル（画像・姿勢）は走行ごとに作る。
-  ラベル範囲が、共有元の範囲から `scenes.share_tolerance_m`（既定 20 m）を超えてはみ出すシーンは共有しない。例えば、同じマスを通った後に別の方向へ曲がる走行。
-- **坂のログでの確認**: 仕組み上は坂に対応している（3D 路面、BEV も 3D 交差、テストあり）。ただし実際の坂のログでは確かめていない。
-
+  Scenes are cut on a fixed map grid (`length_m` squares, `run.tile_runs`), so drives starting at different places
+  get the same scenes on the same road. In the sample data 11 of 20 scenes were shared (including a drive returning
+  to the same place). Samples (images, poses) are still made per drive. A scene whose box sticks out of the earlier
+  box by more than the tolerance (e.g. a drive turning another way after the same cell) is not shared.
+- **Slopes and elevated roads with real logs**: the method handles them (3D surface, 3D intersection for the BEV,
+  tests), but no real log driving up a slope or on top of an elevated road has been checked yet.
