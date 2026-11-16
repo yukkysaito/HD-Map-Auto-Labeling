@@ -32,6 +32,18 @@ STATES = ("accepted", "needs_revision", "rejected", "uncertain")
 DECISIONS = ("ok", "drop", "off", "unsure")
 
 
+def save_json(path: str, obj) -> bool:
+    """write only when the content changes: review files are inputs of the label steps (a rewrite redoes them)."""
+    if os.path.exists(path):
+        try:
+            if json.load(open(path)) == json.loads(json.dumps(obj)):
+                return False
+        except ValueError:
+            pass
+    json.dump(obj, open(path, "w"), indent=1)
+    return True
+
+
 def prompt_version(name="verifier") -> str:
     return hashlib.sha1(open(f"{PROMPTS}/{name}.md", "rb").read()).hexdigest()[:10]
 
@@ -239,13 +251,13 @@ def verify_scene(agents: Agents, pack_dir: str, review_path: str, keep_dir: str,
             for r in pack["items"]:
                 if e.get("at") == r["at"] and e.get("kind") == r["kind"] and str(r["n"]) in items:
                     e["confidence"] = items[str(r["n"])]["confidence"]
-        json.dump(rv, open(review_path, "w"), indent=1)
+        save_json(review_path, rv)
     review = json.load(open(review_path)) if os.path.exists(review_path) else None
     feats = json.load(open(vectors_path))["features"] if os.path.exists(vectors_path) else []
     state, reasons = scene_state(review, geom, feats, cfg, verifier_ok)
     if review is not None and review.get("verdict") != "bad":  # the deterministic state decides a reject
         review["reject"] = state == "rejected" or bool(review.get("rejected_by"))
-        json.dump(review, open(review_path, "w"), indent=1)
+        save_json(review_path, review)
     res = dict(scene=pack["scene"], state=state, reasons=reasons, verifier=agents.model_of(role),
                prompt=prompt_version(), geometry={k: v for k, v in ((geom or {}).get("curb") or {}).items() if k != "per_curb"}
                | {"height": (geom or {}).get("height")},

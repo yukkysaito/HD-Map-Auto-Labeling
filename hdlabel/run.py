@@ -517,6 +517,18 @@ def curb_args(area, gts) -> list:
         + (["--curb-rules", *cf["rules"]] if cf.get("rules") else [])  # fmt: skip
 
 
+def fixes_file(area) -> str:
+    """work/fixes.json: the fixes (deletions / changes) of all review files in one file, rewritten only when they
+    change - the input of vectorize, so a new 'ok' decision does not redo every scene's vectors."""
+    from hdlabel.agents.verify import save_json
+
+    f = f"{area.work}/fixes.json"
+    with area.lock:
+        fx = [x for r in area.reviews() for x in json.load(open(r)).get("fixes", [])]
+        save_json(f, dict(fixes=fx))
+    return f
+
+
 def label(area, s, force):
     sid = s["id"]
     owner = area.owners.get(sid, sid)
@@ -599,13 +611,13 @@ def label(area, s, force):
             "--out",
             f"{S}/vectors",
             "--fixes",
-            *area.reviews(),
+            fixes_file(area),
             *marking_args(area),
             *curb_args(area, gts),
             *dbg(),
         ],
         [f"{S}/vectors/vectors.geojson"],
-        [f"{S}/labels/ground_map.npz", f"{S}/labels/arrows.json", *area.reviews()],
+        [f"{S}/labels/ground_map.npz", f"{S}/labels/arrows.json", fixes_file(area)],
         force=force,
     )
     return f"drives {drives}"

@@ -241,6 +241,16 @@ tools:
           base: 0.7643
           cand: 0.7688
           better: 0.0045
+    - date: '2026-11-16'
+      active: default
+      previous: curb_shape
+      by: agent:demo
+      note: rollback
+    - date: '2026-11-16'
+      active: curb_shape
+      previous: default
+      by: agent:demo
+      note: rollback
   geom_check:
     purpose: verification without cameras - curbs vs LiDAR height steps, vector height vs LiDAR ground
     stage: verify
