@@ -16,7 +16,7 @@ import os
 import sqlite3
 import time
 
-KINDS = ("problem", "cause", "fix", "attempt", "tool_eval", "research", "verification", "training", "note")
+KINDS = ("problem", "cause", "fix", "attempt", "tool_eval", "research", "verification", "training", "spec", "note")
 SCHEMA = """
 create table if not exists rec (id integer primary key, kind text, title text, text text, tags text, status text,
                                 data text, area text, time text, supersedes integer);
