@@ -305,3 +305,9 @@ tools:
       default: {}
     active: default
     history: []
+spec:
+  version: 85b9d74b0e
+  commit: f7d42c1
+  date: '2026-11-17'
+  by: agent:claude-opus-5-5
+  note: initial spec, written from the tools (lane lines as painted pieces with line_id)
