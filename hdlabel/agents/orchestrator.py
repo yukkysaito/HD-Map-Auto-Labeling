@@ -312,7 +312,7 @@ def spec_loop(area, kb, dry=False) -> dict:
         )
     rid = kb.add("spec", f"spec change {st['aligned'].get('version')} -> {st['version']}", st["diff"][:3000], ["spec"],
                  status="open", area=area.name)  # fmt: skip
-    branch = f"spec-{st['version']}-{time.strftime('%Y%m%d-%H%M%S')}"
+    branch = f"spec-{st['version']}-{time.strftime('%Y%m%d-%H%M%S')}-{os.urandom(2).hex()}"  # unique per attempt
     wt = worktree(branch)
     task = (f"Spec change (git diff of spec/labels.yaml since the tools were last aligned):\n{st['diff'] or '(first alignment)'}\n\n"
             f"The whole new spec:\n{open(f'{ROOT}/spec/labels.yaml').read()}\n\nData facts:\n{facts(kb)}\n"
