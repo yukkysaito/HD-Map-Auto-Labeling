@@ -44,8 +44,17 @@ def save_json(path: str, obj) -> bool:
     return True
 
 
+def system_prompt() -> str:
+    """prompts/verifier.md with the judging rules of spec/labels.yaml filled in."""
+    from hdlabel import spec
+
+    return open(f"{PROMPTS}/verifier.md").read().replace("{SPEC_RULES}", spec.rules())
+
+
 def prompt_version(name="verifier") -> str:
-    return hashlib.sha1(open(f"{PROMPTS}/{name}.md", "rb").read()).hexdigest()[:10]
+    """hash of the prompt as sent (the verifier's includes the spec rules)."""
+    text = system_prompt() if name == "verifier" else open(f"{PROMPTS}/{name}.md").read()
+    return hashlib.sha1(text.encode()).hexdigest()[:10]
 
 
 def _item_prompt(rows: list[dict]) -> str:
@@ -74,7 +83,7 @@ TILE_PROMPT = (
 def judge_items(agents: Agents, rows: list[dict], role="verifier", batch=5, jobs=4) -> dict:
     """rows: [{key, image, kind, reason, confidence, size_m}] -> {key: {decision, confidence, reason}}; items whose
     call failed get decision unsure with the error."""
-    system = open(f"{PROMPTS}/verifier.md").read()
+    system = system_prompt()
     chunks = [rows[i : i + batch] for i in range(0, len(rows), batch)]
 
     def one(ch):
@@ -124,7 +133,7 @@ def judge_confirmed(agents: Agents, rows: list[dict], cfg: dict) -> dict:
 
 def judge_tiles(agents: Agents, tiles: list[dict], role="verifier", batch=4) -> dict:
     """tiles: [{key, image}] -> {key: "ok" | "missed: what, where"}."""
-    system = open(f"{PROMPTS}/verifier.md").read()
+    system = system_prompt()
     out = {}
     for i in range(0, len(tiles), batch):
         ch = tiles[i : i + batch]

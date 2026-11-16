@@ -7,6 +7,7 @@ from __future__ import annotations
 import datetime
 import json
 
+from hdlabel import spec
 from hdlabel.agents.bench import bench_dir, lock
 
 
@@ -51,30 +52,16 @@ def review_page(name: str) -> str:
 <label><input type="checkbox" id="h"> hide elements all judges agree on</label>
 <button id="s">save decisions (JSON)</button> <span id="n"></span>
 <small>Then: ./autolabel bench apply CONFIG bench_review.json --by person:NAME</small></div>
-<details open class="guide"><summary><b>How to judge</b> (the same rules the AI judges got: hdlabel/agents/prompts/verifier.md)</summary>
+<details open class="guide"><summary><b>How to judge</b> (from spec/labels.yaml)</summary>
 <p><b>Each row</b>, left to right: <i>map</i> (top view made from many camera frames, north up) | <i>map + outline</i> |
 two camera frames that see the element, each bare and <i>+ outline</i>. The outline is the element being checked:
 <span style="color:#2a62ff"><b>blue = curb</b></span>, <span style="color:#d9a400"><b>yellow = road marking</b></span>
 (lane line, stop line, arrow, painted area). The map is sharp in the middle of the road and blurred at its edges; the
 camera is sharp up close.</p>
-<p>Only judge whether the extraction is right (is it there, is it in the right place), not its meaning (arrow direction,
-line type).</p>
-<table>
-<tr><th></th><th>correct</th><th>wrong</th></tr>
-<tr><td><b>curb</b> (blue)</td><td>a kerb: a <b>physically raised edge</b> between the road and a sidewalk, island, median
-or planter next to the road, and the line follows it within about 0.3 m. A lowered kerb at a driveway or crossing, where the
-kerb line continues, counts.</td><td>no raised edge: flat transition from road to sidewalk or ground (that boundary is a
-separate element, <i>road_boundary</i>, not checked here), a painted line, the base of a wall / fence / building,
-the edge of a lawn or planter away from the road, a shadow. Or the kerb is there but the line is clearly beside it
-(more than about 0.5 m).</td></tr>
-<tr><td><b>marking</b> (yellow)</td><td>the outline lies on <b>paint on the road surface</b> (any paint) and follows it
-within about 0.3 m. A short piece of a real line (one dash) is correct. Each dash of a dashed line is its own element: an outline that runs across the
-unpainted gap between dashes is wrong.</td><td>no paint: shadow, asphalt patch or seam,
-tyre marks, wet patch, manhole, paint on a kerb face / wall / pole, paint on a sidewalk or plaza. Or the paint is there but
-the outline is clearly beside it or covers a clearly wrong extent.</td></tr>
-</table>
-<p><b>cannot tell</b>: the images do not show it (blurred, hidden in both views, outside the observed area). If one view
-is blocked by a car or pole, judge from the others.</p></details>
+<p>The rules below come from the label specification (spec/labels.yaml), the same text the AI judges get.</p>
+"""
+        + spec.rules(html=True)
+        + """</details>
 <div id="list">"""
         + "\n".join(cards)
         + """</div>

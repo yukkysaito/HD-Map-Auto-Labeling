@@ -4,7 +4,7 @@ usage: ./autolabel validate output/<name>/dataset/dataset.json [--out report.jso
 
 Errors (exit code 1): unsupported format, missing / unreadable files, images whose size differs from the camera's,
 broken references (sample -> frame -> image), non-monotonic sample times, non-rigid poses, pose jumps, vectors without
-coordinates. Warnings: low QA pass rate, little road / observed area, lane-line vectors that mostly do not lie on
+coordinates, vectors that do not match spec/labels.yaml (kind, geometry, attributes). Warnings: low QA pass rate, little road / observed area, lane-line vectors that mostly do not lie on
 marking cells of the raster (labels and vectors disagree).
 """
 
@@ -123,6 +123,13 @@ def check_scene(root, s, rep, read_images, max_speed=60.0):
     for k, f in enumerate(vectors):
         if not f["geometry"]["coordinates"]:
             rep.error(w, f"vector {k} ({f['properties'].get('kind')}) has no coordinates")
+    from hdlabel import spec
+
+    errs, warns = spec.conform(vectors)  # kinds, geometry and attributes as spec/labels.yaml defines them
+    for e in errs:
+        rep.error(w, f"spec: {e}")
+    for e in warns:
+        rep.warn(w, f"spec: {e}")
     on_mk = lane_on_marking(m, vectors)
     qa = s["qa_ok"] / max(s["samples"], 1)
     if qa < 0.5:

@@ -53,7 +53,7 @@ STEPS = os.path.join(ROOT, "hdlabel", "steps")
 EVAL = os.path.join(ROOT, "hdlabel", "eval")
 
 
-AGENT_COMMANDS = ("kb", "tools", "bench", "experiment", "impact", "evolve", "train")
+AGENT_COMMANDS = ("kb", "tools", "bench", "experiment", "impact", "evolve", "train", "spec")
 
 # config keys a project config replaces as a whole (a camera list is not merged with the default one)
 REPLACE = ("cameras",)

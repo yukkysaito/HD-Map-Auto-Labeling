@@ -1,0 +1,102 @@
+# What the labels ARE: the single source of truth for the vector elements.
+#
+# A person changes this file; `./autolabel spec <config> apply` lets the engineer agent update the tools, tests and docs
+# to match (docs/AGENTS.md, "Spec loop"). The verifier prompt and the benchmark review page take their judging rules
+# from here, and `./autolabel validate` checks every exported element against `geometry` and `attributes`.
+#
+# kinds.<kind>:
+#   group        verification group: marking (outlined yellow) | curb (blue) | none (not verified one by one)
+#   geometry     LineString | Polygon
+#   definition   what the element is, in one or two sentences
+#   attributes   {name: meaning}; every element of the kind carries all of them (value may be null)
+#   optional     {name: meaning}; attributes some elements carry (e.g. set by a review fix)
+#   correct      when the verifier / the person calls an element correct
+#   wrong        when it is wrong (nothing real there, or clearly in the wrong place)
+version: 2
+principles:
+  - Follow the paint and the physical road as they are. No semantic interpretation in the geometry; grouping or
+    meaning (line_id, style, arrow directions) goes into attributes.
+  - Judge the extraction only (is it there, is it in the right place), never the meaning (arrow direction, line type).
+unsure: the images do not show it (blurred, hidden in both views, outside the observed area). If one view is blocked by
+  a car or pole, judge from the others.
+kinds:
+  lane_line:
+    group: marking
+    geometry: LineString
+    definition: one painted piece of a thin line on the road surface, as painted. Each dash of a dashed line is its own
+      element; unpainted gaps shorter than 0.5 m (worn paint) are bridged.
+    attributes:
+      line_id: pieces of one line (collinear dashes) share it
+      style: style of that line, solid | dashed | short
+      length: length of the piece (m)
+      width: paint width (m)
+      painted: 1.0 (kept for the format)
+      segments: "[[0, length]] (kept for the format)"
+      confidence: mean vote share of the marking class over its cells
+      observations: median number of camera views of its cells
+    correct:
+      - the outline lies on paint on the road surface and follows it within about 0.3 m
+      - a short piece of a real line (one dash) is correct
+    wrong:
+      - "no paint: shadow, asphalt patch or seam, joint between road and pavement, tyre marks, wet patch, manhole, a car,
+        paint on a kerb face / wall / pole, paint on a sidewalk or plaza for pedestrians, a squiggle on worn asphalt that
+        follows no clear paint edge"
+      - the outline runs across the unpainted gap between dashes
+      - the paint is there but the outline is clearly beside it (more than about 0.5 m) or covers a clearly wrong extent
+  stop_line:
+    group: marking
+    geometry: LineString
+    definition: a wide painted line across the lanes (about 0.45 m wide), as painted.
+    attributes: {length: length (m), width: paint width (m), confidence: as lane_line, observations: as lane_line}
+    correct: ["the outline lies on the wide line across the lanes and follows it within about 0.3 m"]
+    wrong: ["no paint there, or the outline is clearly beside the paint"]
+  marking_area:
+    group: marking
+    geometry: Polygon
+    definition: wide or compact paint that is not a thin line (symbols, letters, hatched zones, wide bars), as painted.
+    attributes: {confidence: as lane_line, observations: as lane_line}
+    optional: {type: set by a review fix (e.g. zebra), reviewed: changed by a review fix}
+    correct: ["the outline encloses paint on the road surface"]
+    wrong: ["no paint inside the outline, or it clearly covers a wrong extent"]
+  arrow:
+    group: marking
+    geometry: LineString
+    definition: a lane direction arrow, as a line from tail to tip, with the outlines of its paint.
+    attributes: {arrow_id: id, directions: "straight / left / right", shape: "S, L, R, SL, SR", score: shape match,
+                 length: m, width: m, outlines: paint outline rings, confidence: as lane_line, observations: as lane_line}
+    correct: ["the outline lies on a painted arrow"]
+    wrong: ["no arrow paint there, or the outline is clearly beside it"]
+  crosswalk:
+    group: marking
+    geometry: Polygon
+    definition: the area of the stripes of one pedestrian crossing.
+    attributes: {confidence: as lane_line, observations: as lane_line}
+    optional: {type: set by a review fix, reviewed: changed by a review fix, checked: confirmed by a review}
+    correct: ["the outline covers painted crosswalk stripes"]
+    wrong: ["no stripes inside, or it clearly covers a wrong extent"]
+  curb:
+    group: curb
+    geometry: LineString
+    definition: a kerb, a physically raised edge between the road and a sidewalk, island, median or planter next to the
+      road. A lowered kerb at a driveway or crossing, where the kerb line continues, counts.
+    attributes: {length: m, confidence: mean vote share of the curb class over its cells, observations: as lane_line}
+    correct: ["a raised edge runs along the line, within about 0.3 m"]
+    wrong:
+      - "no raised edge: flat transition from road to sidewalk or ground (that is a road_boundary), a painted line, the
+        base of a wall / fence / building, the edge of a lawn or planter away from the road, a shadow"
+      - the kerb is there but the line is clearly beside it (more than about 0.5 m)
+  curb_candidate:
+    group: none
+    geometry: LineString
+    definition: a curb line the curb filter judged not to be a road kerb; not a boundary for training.
+    attributes: {curb_check: the failed rules, length: m, confidence: as curb, observations: as lane_line}
+  drivable_area:
+    group: none
+    geometry: Polygon
+    definition: road + marking + crosswalk + manhole cells that were observed (holes = islands).
+    attributes: {area: m2}
+  road_boundary:
+    group: none
+    geometry: LineString
+    definition: the outline of the drivable area, split into runs.
+    attributes: {length: m, observed: true = a real boundary (curb / sidewalk / off-road outside); false = edge of the observed area}

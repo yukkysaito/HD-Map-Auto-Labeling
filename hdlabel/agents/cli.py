@@ -234,3 +234,35 @@ def evolve_cmd(area, a):
         if r["action"] in ("dry", "scan"):
             break
     return out
+
+
+def spec_cmd(area, a):
+    """./autolabel spec <config> [status | apply | aligned --by NAME]: the label spec (spec/labels.yaml) vs the tools."""
+    from hdlabel.agents import orchestrator
+
+    act = a.rest[0] if a.rest else "status"
+    if act == "status":
+        st = orchestrator.spec_state()
+        print(f"spec {st['version']}; tools aligned to {st['aligned'].get('version')} ({st['aligned'].get('commit')}, "
+              f"{st['aligned'].get('date')}, by {st['aligned'].get('by')})")  # fmt: skip
+        print(
+            "tools match the spec"
+            if not st["changed"]
+            else f"spec changed -> ./autolabel spec <config> apply\n{st['diff']}"
+        )
+        return st
+    if act == "apply":
+        r = orchestrator.spec_loop(area, knowledge(), dry=a.dry)
+        print(json.dumps(r, indent=1, default=str)[:4000])
+        if r.get("merged"):
+            print(
+                "next: ./autolabel impact <config> (what will be redone), ./autolabel run <config> (label + verify again)"
+            )
+        return r
+    if act == "aligned":  # a person brought the tools in line by hand
+        if not a.by:
+            raise SystemExit("spec aligned --by NAME (who checked that the tools follow the spec)")
+        orchestrator.mark_aligned(a.by, a.note or "")
+        print("recorded in tools/registry.yaml (commit it)")
+        return None
+    raise SystemExit(f"spec {act}: unknown (status | apply | aligned)")

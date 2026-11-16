@@ -53,6 +53,21 @@ it; only a person rebuilds / re-locks (`--by person:NAME` records who approved t
 Metrics are computed on RAW tool output (no review fixes): recall of reference-ok elements, share of reference-wrong
 elements still produced (fp), LiDAR step share of all curbs (needs no reference), lengths.
 
+## Label spec and spec loop (`spec/labels.yaml`)
+The spec says what each vector element is: definition, geometry, attributes, and when it is correct / wrong. It is the
+person's; no agent edits it. The verifier prompt and the benchmark review page render their judging rules from it, and
+`validate` checks every exported element against its geometry and attributes. To change what the labels are:
+```bash
+$EDITOR spec/labels.yaml && git commit -am "spec: ..."   # the person changes the spec
+./autolabel spec <config>                     # spec version vs the version the tools follow (tools/registry.yaml `spec`)
+./autolabel spec <config> apply               # engineer agent updates tools, tests and docs in a worktree; tests and
+                                              # spec conformance must pass, then it is merged and recorded as aligned
+./autolabel impact <config> && ./autolabel run <config>   # redo the affected steps, verify again under the new rules
+./autolabel spec <config> aligned --by person:NAME        # tools were brought in line by hand
+```
+`evolve` runs the spec loop first whenever the spec changed. Benchmark reference items of a changed kind were judged
+under the old rules: rebuild them (`bench build`) or review them (`bench review`).
+
 ## Tool loop
 ```bash
 ./autolabel tools <config>                          # registry: tools, active variants, code versions, history

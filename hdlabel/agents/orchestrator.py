@@ -138,7 +138,7 @@ def engineer(area, kb, problem: dict, candidate: dict, branch: str) -> dict:
     rep = area.agents.ask("engineer", task, system=open(f"{PROMPTS}/engineer.md").read(),
                           tools=("Read", "Edit", "Write", "Bash", "Glob", "Grep"), cache=False, cwd=wt)  # fmt: skip
     ans = rep.json()
-    bad = [f for f in touched(wt) if f.startswith(bench.PROTECTED)]
+    bad = [f for f in touched(wt) if f.startswith(bench.PROTECTED + SPEC_PROTECTED)]
     if bad:
         raise RuntimeError(f"candidate touches protected paths: {bad}")
     return dict(ans, worktree=wt, cost_usd=rep.cost_usd)
@@ -226,6 +226,8 @@ def evolve(area, a) -> dict:
         area.agents.budget = float(a.budget)
     if a.scan:
         return dict(action="scan", result=scan(area, kb))
+    if spec_state()["changed"]:  # the person's spec comes first: tools follow it before anything else
+        return spec_loop(area, kb, dry=a.dry)
     states = {}
     for s in area.scenes():
         f = f"{area.dbg_dir(s['id'])}/verification.json"
@@ -250,3 +252,91 @@ def evolve(area, a) -> dict:
 
         return dict(action="model loop", **training.loop(area, kb))
     return dict(action="scan", result=scan(area, kb))
+
+
+# ---------------------------------------------------------------- spec loop
+SPEC_PROTECTED = ("spec/",)  # the spec is the person's; no agent changes it
+
+
+def spec_state() -> dict:
+    """current spec version vs the version the tools were last aligned to (tools/registry.yaml `spec`)."""
+    from hdlabel import spec
+    from hdlabel.agents import registry
+
+    al = registry.load().get("spec") or {}
+    cur = spec.version()
+    diff = ""
+    if al.get("commit") and al.get("version") != cur:
+        diff = subprocess.run(["git", "diff", al["commit"], "--", "spec/labels.yaml"], cwd=ROOT, capture_output=True,
+                              text=True).stdout  # fmt: skip
+    return dict(version=cur, aligned=al, changed=al.get("version") != cur, diff=diff)
+
+
+def mark_aligned(by: str, note: str = ""):
+    """record that the tools implement the current spec (version, commit, date) in tools/registry.yaml."""
+    from hdlabel import spec
+    from hdlabel.agents import registry
+
+    reg = registry.load()
+    head = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True
+    ).stdout.strip()
+    reg["spec"] = dict(version=spec.version(), commit=head, date=time.strftime("%Y-%m-%d"), by=by, note=note)
+    registry.save(reg)
+
+
+def check_worktree(wt: str) -> dict:
+    """independent checks of a candidate worktree: lint and the whole test suite (the synthetic pipeline output is
+    checked against the spec there)."""
+    py = f"{ROOT}/.venv/bin/python"
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    lint = subprocess.run([f"{ROOT}/.venv/bin/ruff", "check", "."], cwd=wt, capture_output=True, text=True, env=env)
+    t = subprocess.run([py, "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"], cwd=wt, capture_output=True,
+                       text=True, env=env)  # fmt: skip
+    tail = (t.stdout or t.stderr).strip().splitlines()[-1:] or [""]
+    return dict(ok=lint.returncode == 0 and t.returncode == 0, lint=lint.returncode == 0, tests=tail[0])
+
+
+def spec_loop(area, kb, dry=False) -> dict:
+    """the spec changed: engineer agent updates the tools in a worktree; tests + spec conformance must pass; then the
+    change is merged and the spec recorded as aligned. The next `run` redoes the affected steps and verifies again
+    under the new rules (the verifier prompt includes the spec)."""
+    from hdlabel.agents import bench
+
+    st = spec_state()
+    if not st["changed"]:
+        return dict(action="spec", result="tools match the spec", version=st["version"])
+    if dry:
+        return dict(
+            action="spec", result="spec changed", **{k: st[k] for k in ("version", "aligned")}, diff=st["diff"][:3000]
+        )
+    rid = kb.add("spec", f"spec change {st['aligned'].get('version')} -> {st['version']}", st["diff"][:3000], ["spec"],
+                 status="open", area=area.name)  # fmt: skip
+    branch = f"spec-{st['version']}-{time.strftime('%Y%m%d-%H%M%S')}"
+    wt = worktree(branch)
+    task = (f"Spec change (git diff of spec/labels.yaml since the tools were last aligned):\n{st['diff'] or '(first alignment)'}\n\n"
+            f"The whole new spec:\n{open(f'{ROOT}/spec/labels.yaml').read()}\n\nData facts:\n{facts(kb)}\n"
+            f"Main checkout (read only, has the venv and the data): {ROOT}\nPython: {ROOT}/.venv/bin/python\n"
+            f"Scene data to look at (read only): {area.work}/scenes\n")  # fmt: skip
+    try:
+        rep = area.agents.ask("engineer", task, system=open(f"{PROMPTS}/spec_engineer.md").read(),
+                              tools=("Read", "Edit", "Write", "Bash", "Glob", "Grep"), cache=False, cwd=wt)  # fmt: skip
+        ans = rep.json()
+    except (ProviderError, ValueError) as e:
+        kb.update(rid, status="failed", text=f"engineer failed: {e}"[:1000])
+        return dict(action="spec", result=f"engineer failed: {e}", branch=branch)
+    bad = [f for f in touched(wt) if f.startswith(bench.PROTECTED + SPEC_PROTECTED)]
+    chk = check_worktree(wt)
+    ok = chk["ok"] and not bad
+    if ok:
+        subprocess.run(["git", "merge", "--no-ff", "-q", "-m", f"Merge {branch}: tools follow spec {st['version']}", branch],
+                       cwd=ROOT, check=True)  # fmt: skip
+        mark_aligned("agent", ans.get("summary", "")[:300])
+        subprocess.run(["git", "commit", "-q", "-am", f"registry: tools aligned to spec {st['version']}"], cwd=ROOT)
+    subprocess.run(["git", "worktree", "remove", "--force", wt], cwd=ROOT)
+    if ok:
+        subprocess.run(["git", "branch", "-d", branch], cwd=ROOT)
+    res = dict(action="spec", merged=ok, branch=branch, check=chk, protected=bad, summary=ans.get("summary"),
+               open_points=ans.get("open_points"), cost_usd=rep.cost_usd)  # fmt: skip
+    kb.update(rid, status="done" if ok else "failed", text=json.dumps(res)[:2000], data=res)
+    return res
