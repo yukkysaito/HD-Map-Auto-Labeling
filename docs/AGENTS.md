@@ -22,7 +22,8 @@ measure it: `./autolabel bench verifier <config> --role verifier` (accuracy on t
 
 ## Data loop (inside `./autolabel run`)
 label -> export -> debug (evidence packs: `hdlabel/evidence.py`) -> **verify** -> deletions applied (label / export /
-debug again) -> verify again, up to `verification.max_rounds`. Per scene `debug/scenes/<scene>/verification.json`:
+debug again) -> verify again, up to `verification.max_rounds` revisions (then a last verification). A deletion needs
+the verifier and the confirmer to agree; if the confirmer says ok or cannot be reached, the item is `unsure`. Per scene `debug/scenes/<scene>/verification.json`:
 - state: `accepted` | `needs_revision` (deletions not applied yet) | `rejected` (systematic: >= 5 of 10 spot checks
   wrong, curbs off the LiDAR steps) | `uncertain` (verifier unavailable, too many unsure items)
 - issues: `{kind, at, type (false_positive | offset | missed | uncertain | lidar_conflict), evidence, source, action}`
@@ -71,5 +72,6 @@ verifier decides them from the sensor data; a model prediction never becomes a l
 
 ## Knowledge (`./autolabel kb search|list|show|add`, `knowledge/kb.sqlite`, local)
 Problems, research results, attempts (with the gate result), evaluations, verifier accuracies and training analyses,
-full-text searchable. Agents get the matching records in their prompts; nothing in it is final (records can be
+full-text searchable. Records tagged `data-facts` (what the input data has or lacks, e.g. a point cloud map without
+intensity) go into every research and engineering prompt. Agents get the matching records in their prompts; nothing in it is final (records can be
 superseded).

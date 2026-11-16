@@ -41,8 +41,10 @@ A step is skipped when
 
 When settings or inputs change (new drives, calibration, review fixes) only the affected steps are redone. A failed
 step loses its stamp and runs again on the next `run`. A failed drive only affects its own scenes. Steps that may
-rewrite an input of later steps write a file only when its content changes (e.g. `ingest.py`), so a rerun does not
-cascade.
+rewrite an input of later steps write a file only when its content changes (e.g. `ingest.py`, the review files,
+`work/fixes.json` = the fixes of all review files, which is what vectorize reads), so a rerun does not cascade. Paths
+under the output root are replaced by `<OUT>` in the key, so experiments (`output/<name>/experiments/<id>/`) reuse the
+stamps of unchanged steps. `./autolabel impact` lists what a change would redo without running anything.
 
 ## Checks after a change
 1. `./autolabel test` passes (also with `HDLABEL_DEVICE=cpu`), `ruff check . && ruff format --check .` and
