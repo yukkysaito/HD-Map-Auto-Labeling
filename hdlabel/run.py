@@ -512,7 +512,8 @@ def curb_args(area, gts) -> list:
     if not cf.get("enabled"):
         return []
     return ["--curb-filter", "--gt", *gts, "--curb-adjacent", cf["adjacent_m"], "--curb-min-adjacent",
-            cf["min_adjacent"], "--curb-min-first", cf["min_first_edge"], "--curb-wavy", cf["max_wavy_deg_per_m"]]  # fmt: skip
+            cf["min_adjacent"], "--curb-min-first", cf["min_first_edge"], "--curb-wavy", cf["max_wavy_deg_per_m"]] \
+        + (["--curb-rules", *cf["rules"]] if cf.get("rules") else [])  # fmt: skip
 
 
 def label(area, s, force):

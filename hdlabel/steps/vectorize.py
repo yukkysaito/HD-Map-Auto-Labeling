@@ -103,6 +103,7 @@ def main(argv=None):
         "--curb-min-first", type=float, default=0.15, help="--curb-filter: min share of a curb hit first by side rays"
     )
     p.add_argument("--curb-wavy", type=float, default=30.0, help="--curb-filter: max mean turning (deg / m)")
+    p.add_argument("--curb-rules", nargs="*", help="--curb-filter: apply only these rules (default: all)")
     p.add_argument(
         "--fixes",
         nargs="*",
@@ -646,6 +647,8 @@ def main(argv=None):
                       wavy_deg_per_m=a.curb_wavy)  # fmt: skip
         why, st = check_curbs(lines, cls, C, lo, res, trajs, surf, params)
         rules = {}
+        if a.curb_rules:  # only these rules flag a curb (the others are measured but not applied)
+            why = [[r for r in w if r in a.curb_rules] for w in why]
         for i, w in zip(idx, why):
             if w:
                 feats[i]["properties"].update(kind="curb_candidate", curb_check=w)
