@@ -45,6 +45,8 @@ everything flagged on `debug/audit.html` (docs/ANNOTATION.md).
 ./autolabel bench lock <config> --by person:NAME    # sha256 of reference, evidence, criteria and evaluator
 ./autolabel bench status <config>                   # contents + each judge's accuracy (leave-one-out)
 ./autolabel bench verifier <config> [--role R]      # accuracy of the production verifier / one role
+./autolabel bench review <config>                   # bench/<name>/review.html: the person checks the reference
+./autolabel bench apply <config> bench_review.json --by person:NAME   # person's decisions replace the majority + lock
 ```
 Every evaluation checks the lock. A changed reference, criteria (`hdlabel/agents/criteria.yaml`) or evaluator stops
 it; only a person rebuilds / re-locks (`--by person:NAME` records who approved the reference). Scenes are split dev / holdout; the gate needs no regression on both.

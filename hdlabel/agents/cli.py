@@ -35,7 +35,7 @@ def judge_fn(area, role):
 
 
 def bench_cmd(area, a):
-    from hdlabel.agents import bench
+    from hdlabel.agents import bench, bench_review
 
     act = a.rest[0] if a.rest else "status"
     if act == "build":
@@ -94,8 +94,18 @@ def bench_cmd(area, a):
         knowledge().add("verification", f"verifier accuracy {judge}", json.dumps({k: v for k, v in acc.items() if k != "confusion"}),
                         ["verifier", m["provider"], str(m["model"])], data=acc, area=area.name)  # fmt: skip
         print(json.dumps({k: v for k, v in acc.items()}, indent=1))
+    elif act == "review":
+        print(
+            f"open {bench_review.review_page(area.name)} in a browser; then: bench apply <config> bench_review.json --by person:NAME"
+        )
+    elif act == "apply":
+        if len(a.rest) < 2 or not (a.by or "").startswith("person:"):
+            raise SystemExit("bench apply <config> bench_review.json --by person:NAME")
+        dec = json.load(open(a.rest[1]))
+        stat = bench_review.apply_review(area.name, dec.get("decisions", dec), a.by)
+        print(f"reference updated and locked by {a.by}: {stat}")
     else:
-        raise SystemExit(f"bench {act}: unknown (build | lock | status | verifier)")
+        raise SystemExit(f"bench {act}: unknown (build | lock | status | verifier | review | apply)")
 
 
 def tools_cmd(area, a):

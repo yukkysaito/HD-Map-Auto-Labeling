@@ -208,3 +208,28 @@ def test_plans_subscription_and_api(tmp_path, monkeypatch):
     monkeypatch.setenv("HDLABEL_AGENT_PLAN", "nope")
     with pytest.raises(ValueError):
         Agents(cfg, str(tmp_path / "n"))
+
+
+def test_bench_person_review(tmp_path, monkeypatch):
+    """review page lists disputed elements first; the person's decisions replace the majority and lock the reference."""
+    monkeypatch.setattr(bench, "bench_dir", lambda name: str(tmp_path / name))
+    d = tmp_path / "t"
+    os.makedirs(d / "evidence")
+    items = [dict(key="0", kind="curb", group="curb", ref="ok", split="dev", size_m=5.0, at=[0.0, 0.0], why="spot",
+                  evidence="evidence/a.jpg", judges={"a": "ok", "b": "ok"}),
+             dict(key="1", kind="curb", group="curb", ref=None, split="dev", size_m=3.0, at=[9.0, 0.0], why="spot",
+                  evidence="evidence/b.jpg", judges={"a": "ok", "b": "drop"})]  # fmt: skip
+    (d / "reference.json").write_text(json.dumps(dict(items=items, judges=["a", "b"])))
+    (d / "criteria.yaml").write_text(open(bench.CRITERIA).read())
+    from hdlabel.agents import bench_review
+
+    monkeypatch.setattr(bench_review, "bench_dir", lambda name: str(tmp_path / name))
+    page = open(bench_review.review_page("t")).read()
+    assert page.index('data-key="1"') < page.index('data-key="0"')  # disputed first
+    with pytest.raises(ValueError):
+        bench_review.apply_review("t", {"0": "wrong"}, "agent")
+    st = bench_review.apply_review("t", {"0": "wrong", "1": "ok", "x": "ok"}, "person:test")
+    assert st == dict(decided=2, changed=1, added=1, unsure=0)
+    ref = json.load(open(d / "reference.json"))
+    assert [e["ref"] for e in ref["items"]] == ["wrong", "ok"] and "person:test" in ref["judges"]
+    assert bench.check_lock("t")["locked_by"] == "person:test"
