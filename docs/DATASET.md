@@ -94,6 +94,7 @@ the deck on a bridge; levels never mix.
 | `arrow` | `points` line (tail -> tip) | `directions`: a set of `straight` / `left` / `right` (e.g. `["straight", "left"]`), `shape`: S / L / R / SL / SR, `outlines` (paint outline rings, 3D). For e.g. right-turn-only lanes |
 | `stop_line` | `points` line | `width` (m; `vectors.geojson` also has `length`). A wide (~0.45 m) line across the lanes; before format 3 these were `lane_line` |
 | `curb` | `points` line | |
+| `curb_candidate` | `points` line | a curb line the curb filter (`markings.curb_filter`, active tool variant) judged not to be a road kerb; `curb_check` = the rules it failed. Not a boundary for training (the loader skips it); the raster keeps its cells as curb |
 | `road_boundary` | `points` line | `observed`: true = real boundary (curb / sidewalk / off-road outside), false = edge of the observed area (**do not learn it as a boundary**) |
 | `crosswalk` | `rings` polygon | `type` (set by review, e.g. `red_white`) |
 | `marking_area` | `rings` polygon | thick stop lines, text, zebra zones etc. `type` (set by review: zebra / stop_line / text / ...) |

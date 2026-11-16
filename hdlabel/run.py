@@ -1245,7 +1245,7 @@ def main():
     vcfg = area.cfg.get("verification", {})
     if (cmd == "run" and area.debug and vcfg.get("enabled", True)) or cmd == "verify":
         # data improvement loop: verify -> apply the deletions (label / export / debug again) -> verify again
-        for rnd in range(int(vcfg.get("max_rounds", 3))):
+        for rnd in range(int(vcfg.get("max_rounds", 3)) + 1):  # the last round only verifies
             ok = [s for s in pick() if s["id"] not in failed]
             each(f"verify (round {rnd + 1})", verify, ok, lambda s: s["id"])
             states = {s["id"]: json.load(open(f"{area.dbg_dir(s['id'])}/verification.json"))["state"]
@@ -1254,6 +1254,9 @@ def main():
             print("  states: " + ", ".join(f"{k} {sum(v == k for v in states.values())}" for k in
                                            ("accepted", "needs_revision", "rejected", "uncertain")))  # fmt: skip
             if not todo:
+                break
+            if rnd == int(vcfg.get("max_rounds", 3)):
+                print(f"  {len(todo)} scenes still need revision after {rnd} revisions (verification.max_rounds)")
                 break
             ids = {s["id"] for s in todo} | {area.owners.get(s["id"], s["id"]) for s in todo}
             each("revise: label", label, [s for s in area.scenes() if s["id"] in ids], lambda s: s["id"])

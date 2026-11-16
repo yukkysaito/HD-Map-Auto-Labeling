@@ -12,145 +12,286 @@ tools:
     purpose: rosbags -> undistorted camera images, poses, calibration, keyframes, data checks
     stage: drive
     script: hdlabel/steps/ingest.py
-    inputs: [rosbag (mcap) with poses, /tf_static, camera_info, compressed images]
-    outputs: [und_cam*/ images, gt.npy poses, camera_info.json, kf_cam*/ keyframes, ingest.json]
-    config: [topics, cameras, image_scale, jpeg_quality]
+    inputs:
+    - rosbag (mcap) with poses
+    - /tf_static
+    - camera_info
+    - compressed images
+    outputs:
+    - und_cam*/ images
+    - gt.npy poses
+    - camera_info.json
+    - kf_cam*/ keyframes
+    - ingest.json
+    config:
+    - topics
+    - cameras
+    - image_scale
+    - jpeg_quality
     algorithm: one pass over the bags, OpenCV undistortion to pinhole (wide lenses get the configured hfov)
-    good: [Autoware topic layout, any camera count]
-    bad: [bags without /tf_static need tf_static from config]
+    good:
+    - Autoware topic layout
+    - any camera count
+    bad:
+    - bags without /tf_static need tf_static from config
     cost: ~1 min per minute of driving (CPU, I/O bound)
     license: Apache-2.0 (code); deps BSD/MIT
-    deps: [mcap, mcap-ros2-support, opencv-python-headless]
-    variants: {default: {}}
+    deps:
+    - mcap
+    - mcap-ros2-support
+    - opencv-python-headless
+    variants:
+      default: {}
     active: default
     history: []
-
   segment:
     purpose: per-pixel classes of every keyframe (road, marking, crosswalk, manhole, curb, sidewalk, offroad, vertical)
     stage: drive
     script: hdlabel/steps/segment.py
-    writes: ["seg_cam*", seg_done.json]
-    inputs: [kf_cam*/ keyframes]
-    outputs: [seg_cam*/<stamp>.png class ids, seg_done.json]
-    config: [segmentation]
+    writes:
+    - seg_cam*
+    - seg_done.json
+    inputs:
+    - kf_cam*/ keyframes
+    outputs:
+    - seg_cam*/<stamp>.png class ids
+    - seg_done.json
+    config:
+    - segmentation
     algorithm: Mask2Former Swin-L trained on Mapillary Vistas (semantic, 65 classes), half-resolution images
-    model: {id: facebook/mask2former-swin-large-mapillary-vistas-semantic, year: 2022}
-    good: [lane lines and crosswalks on dark asphalt, curbs next to sidewalks, day light]
-    bad: [blobby masks of small markings (arrows lose their heads, arrows.py compensates), faint / worn paint, light
-          concrete surfaces, red crosswalk stripes, kerb of brick plazas]
+    model:
+      id: facebook/mask2former-swin-large-mapillary-vistas-semantic
+      year: 2022
+    good:
+    - lane lines and crosswalks on dark asphalt
+    - curbs next to sidewalks
+    - day light
+    bad:
+    - blobby masks of small markings (arrows lose their heads
+    - arrows.py compensates)
+    - faint / worn paint
+    - light concrete surfaces
+    - red crosswalk stripes
+    - kerb of brick plazas
     cost: ~0.25 s per image on an RTX 5070 (GPU, 6 GB)
-    license: "model weights CC BY-NC 4.0 (trained on Mapillary Vistas, research license): non-commercial; swap for
-             commercial use (README: third-party models)"
-    deps: [transformers, torch]
-    variants: {default: {}}
+    license: 'model weights CC BY-NC 4.0 (trained on Mapillary Vistas, research license): non-commercial; swap for commercial
+      use (README: third-party models)'
+    deps:
+    - transformers
+    - torch
+    variants:
+      default: {}
     active: default
     history: []
-
   surface:
     purpose: 3D road surface of the ego road level from the LiDAR point cloud map (multi-level safe)
     stage: scene
     script: hdlabel/steps/map_surface.py
-    inputs: [point cloud map, trajectories]
-    outputs: [surface/map_ground.npz height grid]
-    config: [scenes]
+    inputs:
+    - point cloud map
+    - trajectories
+    outputs:
+    - surface/map_ground.npz height grid
+    config:
+    - scenes
     algorithm: height layers + connectivity from the trajectory (bridges / decks separated)
-    good: [elevated roads, slopes]
-    bad: [areas the LiDAR map does not cover]
+    good:
+    - elevated roads
+    - slopes
+    bad:
+    - areas the LiDAR map does not cover
     cost: ~10 s per scene (CPU)
     license: Apache-2.0
-    deps: [numpy, scipy]
-    variants: {default: {}}
+    deps:
+    - numpy
+    - scipy
+    variants:
+      default: {}
     active: default
     history: []
-
   project:
     purpose: fuse the segmentations of all keyframes of all drives on the surface -> 0.1 m label map + ortho image
     stage: scene
     script: hdlabel/steps/project_labels.py
-    inputs: [surface, seg_cam*, calib]
-    outputs: [labels/ground_map.npz (cls, votes, n, rgb)]
-    config: [fusion]
+    inputs:
+    - surface
+    - seg_cam*
+    - calib
+    outputs:
+    - labels/ground_map.npz (cls
+    - votes
+    - n
+    - rgb)
+    config:
+    - fusion
     algorithm: per-cell vote of projected classes, distance weighted
-    good: [multi-drive fusion, occlusions by cars average out]
-    bad: [thin far lines get few votes; vertical things project onto the ground at their base]
+    good:
+    - multi-drive fusion
+    - occlusions by cars average out
+    bad:
+    - thin far lines get few votes; vertical things project onto the ground at their base
     cost: ~1 min per scene (GPU)
     license: Apache-2.0
-    deps: [torch]
-    variants: {default: {}}
+    deps:
+    - torch
+    variants:
+      default: {}
     active: default
     history: []
-
   arrows:
     purpose: turn arrows with their shape and direction from sharp single frames
     stage: scene
     script: hdlabel/steps/arrows.py
-    inputs: [label map, keyframes]
-    outputs: [labels/arrows.json]
-    config: [markings.arrow_templates]
+    inputs:
+    - label map
+    - keyframes
+    outputs:
+    - labels/arrows.json
+    config:
+    - markings.arrow_templates
     algorithm: candidate blobs -> sharp ground patches -> template matching (regional template set)
-    good: [Japanese arrow shapes]
-    bad: [other regions' shapes need their template set]
+    good:
+    - Japanese arrow shapes
+    bad:
+    - other regions' shapes need their template set
     cost: ~30 s per scene (CPU)
     license: Apache-2.0
-    deps: [opencv-python-headless]
-    variants: {default: {}}
+    deps:
+    - opencv-python-headless
+    variants:
+      default: {}
     active: default
     history: []
-
   vectorize:
     purpose: label map -> 3D vector elements (lane_line, stop_line, crosswalk, marking_area, arrow, curb, boundary)
     stage: scene
     script: hdlabel/steps/vectorize.py
-    inputs: [labels/ground_map.npz, arrows.json, review fixes]
-    outputs: [vectors/vectors.geojson]
-    config: [markings]
+    inputs:
+    - labels/ground_map.npz
+    - arrows.json
+    - review fixes
+    outputs:
+    - vectors/vectors.geojson
+    config:
+    - markings
     algorithm: skeletons / contours of the voted classes, gap joining, confidence from the vote share, fragment filter
-    good: [painted lines, crosswalks]
-    bad: [curb lines on planter edges / building walls (the segmentation calls them curb), short fragments]
+    good:
+    - painted lines
+    - crosswalks
+    bad:
+    - curb lines on planter edges / building walls (the segmentation calls them curb)
+    - short fragments
     cost: ~20 s per scene (CPU)
     license: Apache-2.0
-    deps: [scikit-image, shapely]
+    deps:
+    - scikit-image
+    - shapely
     variants:
       default: {}
-      # curbs that are not road kerbs (not on the edge of the road flood-filled from the trajectories, not the first
-      # edge sideways from them, small loops, wavy, short at the edge of the view) -> kind curb_candidate
-      curb_adjacency: {markings: {curb_filter: {enabled: true}}}
-      # only the shape rules: on the benchmark's dev split the adjacency and edge-of-view rules removed more correct
-      # kerbs than wrong ones (curb_adjacency was rejected by the gate), loops / wavy lines removed only wrong ones
-      curb_shape: {markings: {curb_filter: {enabled: true, rules: [loop, wavy]}}}
-    active: default
-    history: []
-
+      curb_adjacency:
+        markings:
+          curb_filter:
+            enabled: true
+      curb_shape:
+        markings:
+          curb_filter:
+            enabled: true
+            rules:
+            - loop
+            - wavy
+    active: curb_shape
+    history:
+    - date: '2026-11-16'
+      active: curb_shape
+      previous: default
+      by: agent:claude-opus-5-5
+      note: 'curb filter, shape rules only (research: road-adjacency/first-edge filter; attempt 1 rejected)'
+      evidence:
+        experiment: curb-shape
+        gain: 0.2
+        target: curb.fp
+        rows:
+        - metric: curb.recall
+          split: all
+          base: 1.0
+          cand: 1.0
+          better: 0.0
+        - metric: curb.recall
+          split: holdout
+          base: 1.0
+          cand: 1.0
+          better: 0.0
+        - metric: curb.fp
+          split: all
+          base: 1.0
+          cand: 0.8
+          better: 0.2
+        - metric: curb.fp
+          split: holdout
+          base: 1.0
+          cand: 1.0
+          better: 0.0
+        - metric: curb.lidar
+          split: all
+          base: 0.7643
+          cand: 0.7688
+          better: 0.0045
+        - metric: curb.lidar
+          split: holdout
+          base: 0.7643
+          cand: 0.7688
+          better: 0.0045
   geom_check:
     purpose: verification without cameras - curbs vs LiDAR height steps, vector height vs LiDAR ground
     stage: verify
     script: hdlabel/steps/geom_check.py
-    inputs: [vectors, point cloud map]
-    outputs: [debug/scenes/<s>/geom_check.json]
+    inputs:
+    - vectors
+    - point cloud map
+    outputs:
+    - debug/scenes/<s>/geom_check.json
     algorithm: height profiles across each curb every 1 m (step > 7 cm within 0.3 m)
-    good: [systematic shifts (calibration / time offset), curbs that are not kerbs]
-    bad: [sparse LiDAR maps, low kerbs < 7 cm]
+    good:
+    - systematic shifts (calibration / time offset)
+    - curbs that are not kerbs
+    bad:
+    - sparse LiDAR maps
+    - low kerbs < 7 cm
     cost: ~10 s per scene (CPU)
     license: Apache-2.0
-    deps: [scipy]
-    variants: {default: {}}
+    deps:
+    - scipy
+    variants:
+      default: {}
     active: default
     history: []
-
   verifier:
     purpose: independent visual verification of the extracted elements on evidence images (map + 2 camera views)
     stage: verify
     script: hdlabel/agents/verify.py
-    inputs: [debug/scenes/<s>/check (evidence pack), geom checks]
-    outputs: [review/<name>/<s>.json, debug/scenes/<s>/verification.json]
-    config: [agents.roles.verifier, verification]
-    algorithm: vision LLM judges each item (ok / drop / off / unsure) with the fixed criteria (prompts/verifier.md),
-               combined with the LiDAR checks; another vendor than the annotator by default
-    good: [false positives (shadows, seams, planters), missed paint in map tiles]
-    bad: [blurred far views; small offsets < 0.3 m]
+    inputs:
+    - debug/scenes/<s>/check (evidence pack)
+    - geom checks
+    outputs:
+    - review/<name>/<s>.json
+    - debug/scenes/<s>/verification.json
+    config:
+    - agents.roles.verifier
+    - verification
+    algorithm: vision LLM judges each item (ok / drop / off / unsure) with the fixed criteria (prompts/verifier.md), combined
+      with the LiDAR checks; another vendor than the annotator by default
+    good:
+    - false positives (shadows
+    - seams
+    - planters)
+    - missed paint in map tiles
+    bad:
+    - blurred far views; small offsets < 0.3 m
     cost: one LLM call per 5 items
     license: depends on the provider's terms
-    deps: [an agent CLI or API (hdlabel/agents/llm.py)]
-    variants: {default: {}}
+    deps:
+    - an agent CLI or API (hdlabel/agents/llm.py)
+    variants:
+      default: {}
     active: default
     history: []

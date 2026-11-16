@@ -100,7 +100,9 @@ def judge_confirmed(agents: Agents, rows: list[dict], cfg: dict) -> dict:
         for r in wrong:
             a, b = res[r["key"]], res2[r["key"]]
             a["confirm"] = dict(decision=b["decision"], reason=b["reason"], model=b.get("model"))
-            if b["decision"] == "ok":
+            if b.get("error"):  # no confirmation, no deletion
+                a.update(decision="unsure", reason=f"not confirmed ({b['reason'][:80]}): {a['reason']}"[:300])
+            elif b["decision"] == "ok":
                 a.update(
                     decision="unsure",
                     reason=f"verifiers disagree: {a['reason']} | other model: ok, {b['reason']}"[:300],
@@ -205,6 +207,13 @@ def verify_scene(agents: Agents, pack_dir: str, review_path: str, keep_dir: str,
     from hdlabel.agent_review import apply
 
     pack = json.load(open(f"{pack_dir}/items.json"))
+    if os.path.exists(review_path):  # the pack may predate decisions made since (it is rebuilt by the debug step)
+        from hdlabel.review_html import decided
+
+        rv0 = json.load(open(review_path))
+        pack["items"] = [r for r in pack["items"] if not decided(rv0, r["kind"], r["at"])]
+        done_tiles = [t["center"] for t in rv0.get("tiles", [])]
+        pack["tiles"] = [t for t in pack["tiles"] if t["center"] not in done_tiles]
     geom = json.load(open(geom_path)) if os.path.exists(geom_path) else None
     role = cfg.get("role", "verifier")
     verifier_ok = agents.available(role)

@@ -117,3 +117,16 @@ def test_scene_state_rules():
     geom = {"curb": {"profiles": 100, "step_within_0_3m": 0.1, "median_offset_m": 0.8}}
     assert scene_state(rv, geom, [], cfg)[0] == "rejected"
     assert scene_state(None, None, [], cfg, verifier_ok=False)[0] == "uncertain"
+
+
+def test_annotation_plan_conditions():
+    from hdlabel.agents import annotate
+
+    reg = {"tools": {"vectorize": {"active": "default", "variants": {
+        "default": {}, "dense": {"when": {"lidar_density": [30, None]}, "markings": {"curb_filter": {"enabled": True}}}}}}}  # fmt: skip
+    assert annotate.plan(reg, {"lidar_density": 50})["vectorize"] == "dense"
+    assert annotate.plan(reg, {"lidar_density": 10})["vectorize"] == "default"
+    assert annotate.plan(reg, {})["vectorize"] == "default"  # unknown fact: the condition does not hold
+    ov = annotate.overlay(reg, {"vectorize": "dense"})
+    assert ov == {"markings": {"curb_filter": {"enabled": True}}}  # `when` is not a setting
+    assert registry.overlay(registry.with_variant(reg, "vectorize", "dense")) == ov

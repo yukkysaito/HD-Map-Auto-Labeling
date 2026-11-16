@@ -86,8 +86,8 @@ device: auto                  # torch device of the GPU steps: auto (cuda if ava
 agents:
   roles:
     default:    {provider: claude_cli, model: claude-sonnet-5-5}
-    verifier:   {provider: claude_cli, model: claude-sonnet-5-5}  # chosen on the benchmark (bench status: accuracy)
-    confirmer:  {provider: codex_cli, model: null}                # other vendor; must agree before a deletion
+    verifier:   {provider: claude_cli, model: claude-sonnet-5-5, timeout: 300}  # chosen on the benchmark (bench status)
+    confirmer:  {provider: codex_cli, model: null, timeout: 300}  # other vendor; must agree before a deletion
     adjudicator: {provider: claude_cli, model: claude-sonnet-5-5}  # judge of the benchmark reference
     researcher: {provider: claude_cli, model: claude-opus-5-5, timeout: 1800}
     engineer:   {provider: claude_cli, model: claude-opus-5-5, timeout: 3600}

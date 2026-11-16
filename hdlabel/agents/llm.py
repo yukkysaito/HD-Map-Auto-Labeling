@@ -74,12 +74,21 @@ def _sha(*parts) -> str:
 
 # ---------------------------------------------------------------- providers
 def _run(cmd, timeout, cwd=None, stdin=None):
+    """run a CLI in its own process group; on timeout the whole group is killed (CLIs start helper processes)."""
+    import signal
+
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=cwd, input=stdin)
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE if stdin else
+                             subprocess.DEVNULL, text=True, cwd=cwd, start_new_session=True)  # fmt: skip
     except FileNotFoundError as e:
         raise ProviderError(f"{cmd[0]} not installed") from e
+    try:
+        out, err = p.communicate(stdin, timeout=timeout)
     except subprocess.TimeoutExpired as e:
-        raise ProviderError(f"{cmd[0]} timed out after {timeout} s") from e
+        os.killpg(p.pid, signal.SIGKILL)
+        p.communicate()
+        raise ProviderError(f"{os.path.basename(cmd[0])} timed out after {timeout} s") from e
+    r = subprocess.CompletedProcess(cmd, p.returncode, out, err)
     if r.returncode:
         raise ProviderError(f"{cmd[0]} failed ({r.returncode}): {(r.stderr or r.stdout)[-500:]}")
     return r.stdout
@@ -109,6 +118,7 @@ def _codex_cli(model, system, prompt, images, tools, timeout, cwd=None):
             BIN.get("codex", "codex"),
             "exec",
             "--skip-git-repo-check",
+            "--ephemeral",
             "--sandbox",
             "read-only",
             "--output-last-message",
