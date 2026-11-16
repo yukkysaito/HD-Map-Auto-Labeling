@@ -922,6 +922,31 @@ def prune(area, d, force=False):
     return f"removed {n} frames ({freed / 1e9:.1f} GB)"
 
 
+def system_summary(area) -> dict:
+    """for the acceptance page: verifier models, benchmark lock and accuracy, adopted tool variants."""
+    from hdlabel.agents import registry
+
+    out = {}
+    v = area.cfg.get("verification", {})
+    out["verifier"] = " + confirmation by ".join(
+        str(area.agents.model_of(r)) for r in (v.get("role", "verifier"), v.get("confirm_role")) if r
+    )
+    lk = f"{ROOT}/bench/{area.name}/LOCK.json"
+    if os.path.exists(lk):
+        L = json.load(open(lk))
+        out["benchmark"] = f"locked by {L['locked_by']} on {L['date']}"
+    for f in sorted(glob.glob(f"{ROOT}/bench/{area.name}/verifier_*.json")):
+        a = json.load(open(f))
+        out[f"verifier accuracy ({a['judge']})"] = (
+            f"{a['accuracy']} on {a['n']} reference elements; deletions correct {a['wrong_precision']}, "
+            f"wrong elements found {a['wrong_recall']}"
+        )
+    for name, t in registry.load()["tools"].items():
+        for h in t.get("history", []):
+            out[f"tool {name} {h['date']}"] = f"{h['previous']} -> {h['active']} by {h['by']} ({h.get('note', '')})"
+    return out
+
+
 def do_audit(area):
     """debug/audit.json|html: scenes ranked by risk of the automatic checks + a random sample (hdlabel/audit.py)."""
     from hdlabel.agent_review import summary
@@ -936,12 +961,14 @@ def do_audit(area):
             rv = summary(json.load(open(rf))) if os.path.exists(rf) else None
             sc = json.load(open(f"{area.ds_dir(sid)}/scene.json"))
             terms = scene_terms(area.ds_dir(sid), area.dbg_dir(sid), vec, f"{area.dbg}/qa/{sid}", rv)
-            rows.append(dict(scene=sid, terms=terms, review=rv, samples=sc["samples"], qa_ok=sc["qa_ok"]))
+            vf = f"{area.dbg_dir(sid)}/verification.json"
+            st = json.load(open(vf))["state"] if os.path.exists(vf) else None
+            rows.append(dict(scene=sid, terms=terms, review=rv, samples=sc["samples"], qa_ok=sc["qa_ok"], state=st))
     if not rows:
         return
     res = audit(rows, **area.cfg.get("audit", {}))
     json.dump(res, open(f"{area.dbg}/audit.json", "w"), indent=1)
-    write_html(res, f"{area.dbg}/audit.html", lambda sid: f"scenes/{sid}", area.name)
+    write_html(res, f"{area.dbg}/audit.html", lambda sid: f"scenes/{sid}", area.name, system_summary(area))
     top = ", ".join(f"{x['scene']} {x['risk']}" for x in res["scenes"][:3])
     state = (
         "ready to accept"

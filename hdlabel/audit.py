@@ -93,8 +93,10 @@ def audit(
     spot_wrong_m = sum(s["review"].get("spot_wrong_m", 0.0) for s in scenes if s.get("review"))
     spot_error = round(spot_wrong_m / spot_m, 3) if spot_m else None  # by length: what a model learns from
     too_wrong = spot_error is not None and spot_error > max_spot_error
+    pending = [s["scene"] for s in ranked if s.get("state") not in (None, "accepted", "rejected")]
     return dict(rule=dict(max_risk=max_risk, max_spot_error=max_spot_error, sample=sample, seed=seed, weights=WEIGHTS),
-                accept=not over and not unreviewed and not rejected and not too_wrong, over_max_risk=over,
+                accept=not over and not unreviewed and not rejected and not too_wrong and not pending, over_max_risk=over,
+                not_accepted=pending,
                 not_reviewed=unreviewed, rejected=rejected, spot=spot, spot_wrong=spot_wrong, spot_m=round(spot_m, 1),
                 spot_wrong_m=round(spot_wrong_m, 1), spot_error=spot_error, too_wrong=too_wrong, random_sample=pick,
                 scenes=ranked)  # fmt: skip
@@ -116,11 +118,21 @@ figure{margin:8px 0} figure img{max-width:100%;border-radius:6px} figcaption{fon
 button{font:inherit;padding:8px 16px;border-radius:8px;border:0;background:#1e8e3e;color:#fff;cursor:pointer} code{background:#f5f5f7;padding:1px 4px;border-radius:4px}"""
 
 
+def _system_html(sy: dict) -> str:
+    """how the labels were checked: benchmark lock (to confirm), verifier models and accuracy, tool adoptions."""
+    esc = html.escape
+    li = [f"<li>{esc(k)}: {esc(str(v))}</li>" for k, v in sy.items()]
+    return (
+        "<h2>How it was checked</h2><ul>" + "".join(li) + "</ul><p class='mute'>Confirm the benchmark lock: "
+        "<code>./autolabel bench status</code>, then <code>./autolabel bench lock --by person:NAME</code>.</p>"
+    )
+
+
 def _pct(a, b):
     return f"{100 * a / b:.0f}%" if b else "-"
 
 
-def write_html(res: dict, path: str, link, name: str = "") -> None:
+def write_html(res: dict, path: str, link, name: str = "", system: dict | None = None) -> None:
     """the acceptance page; link(scene) -> relative path of the scene's debug directory."""
     esc = html.escape
     keys = list(WEIGHTS)
@@ -137,6 +149,10 @@ def write_html(res: dict, path: str, link, name: str = "") -> None:
             why.append(f"{len(res['rejected'])} scenes rejected ({', '.join(map(esc, res['rejected']))})")
         if res.get("too_wrong"):
             why.append(f"spot-check error {res['spot_error']:.0%} by length, limit {res['rule']['max_spot_error']:.0%}")
+        if res.get("not_accepted"):
+            why.append(
+                f"{len(res['not_accepted'])} scenes not accepted by the verification (needs revision / uncertain)"
+            )
         if res["over_max_risk"]:
             why.append(f"{len(res['over_max_risk'])} scenes over the risk limit {res['rule']['max_risk']}")
         verdict = f"<div class='verdict notready'><b>Not ready:</b> {'; '.join(why)}.</div>"
@@ -168,7 +184,8 @@ def write_html(res: dict, path: str, link, name: str = "") -> None:
         )
         cells = "".join(f"<td>{s['terms'].get(k, '')}</td>" for k in keys)
         rows.append(
-            f"<tr{bad}><td><a href='#{esc(s['scene'])}'>{esc(s['scene'])}</a>{mark}</td><td><b>{s['risk']}</b></td>{rcell}{cells}"
+            f"<tr{bad}><td><a href='#{esc(s['scene'])}'>{esc(s['scene'])}</a>{mark}</td><td>{esc(str(s.get('state') or '-'))}</td>"
+            f"<td><b>{s['risk']}</b></td>{rcell}{cells}"
             f"<td><input type='checkbox' class='rej' data-s='{esc(s['scene'])}' {'checked' if r and r['reject'] else ''}></td>"
             f"<td><a href='{d}/review.html'>open</a></td></tr>"
         )
@@ -207,9 +224,10 @@ def write_html(res: dict, path: str, link, name: str = "") -> None:
 Each image: map, map + outline, then two camera views without / with the outline.</li>
 <li>Scenes marked * are a fixed random sample: look at them even when nothing is flagged.</li>
 <li>Tick <b>reject</b> for scenes that must not be used, then sign off at the bottom.</li></ol>
-<h2>Scenes</h2><table><tr><th>scene</th><th>risk</th><th>reviewer</th><th>verdict</th><th>spot wrong</th><th>tiles missed</th>
+<h2>Scenes</h2><table><tr><th>scene</th><th>state</th><th>risk</th><th>reviewer</th><th>verdict</th><th>spot wrong</th><th>tiles missed</th>
 <th>uncertain wrong</th>{th}<th>reject</th><th></th></tr>{"".join(rows)}</table>
 <p class="mute">risk = weighted mean of the terms (0 fine .. 1 bad, hdlabel/audit.py); red = over the limit {res["rule"]["max_risk"]} or rejected.</p>
+{_system_html(system) if system else ""}
 <h2>Evidence per scene</h2>{"".join(det) or "<p>no scene reviewed yet</p>"}
 <h2>Sign-off</h2><div class="form">Your name <input type="text" id="by">
 <label style="margin-left:12px"><input type="checkbox" id="accept" {"checked" if res["accept"] else ""}> I accept the batch (except the scenes ticked reject)</label>
