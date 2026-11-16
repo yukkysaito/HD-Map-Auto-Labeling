@@ -127,3 +127,22 @@ def test_review_fixes_apply(out):
     assert lane["properties"]["length"] not in lengths
     assert all(a["properties"]["directions"] == ["straight", "left"] for a in features(out, "arrow"))
     assert all(a["properties"].get("reviewed") for a in features(out, "arrow"))
+
+
+def test_link_file_falls_back_to_copy(tmp_path, monkeypatch):
+    """keyframes on file systems without links (exFAT): a copy with the same bytes"""
+    from hdlabel import common
+
+    (tmp_path / "und").mkdir()
+    (tmp_path / "kf").mkdir()
+    src = tmp_path / "und" / "1.jpg"
+    src.write_bytes(b"abc")
+
+    def no(*a, **k):
+        raise OSError("not supported")
+
+    monkeypatch.setattr(common.os, "symlink", no)
+    monkeypatch.setattr(common.os, "link", no)
+    common.link_file(str(src), str(tmp_path / "kf" / "1.jpg"))
+    dst = tmp_path / "kf" / "1.jpg"
+    assert not dst.is_symlink() and dst.read_bytes() == b"abc"

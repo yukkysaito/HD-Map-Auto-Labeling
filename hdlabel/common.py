@@ -5,6 +5,7 @@ from __future__ import annotations
 import glob
 import json
 import os
+import shutil
 
 import numpy as np
 from scipy.spatial.transform import Rotation as R
@@ -48,6 +49,18 @@ PALETTE = np.array(
     ],
     np.uint8,
 )  # RGB per raster label id
+
+
+def link_file(src: str, dst: str) -> None:
+    """relative symlink dst -> src; on file systems without symlinks (exFAT, FAT, some network shares) a hard link,
+    else a copy. Readers must not rely on the link (use the directory of the original, see Camera.K)."""
+    try:
+        os.symlink(os.path.relpath(src, os.path.dirname(dst)), dst)
+    except OSError:
+        try:
+            os.link(src, dst)
+        except OSError:
+            shutil.copyfile(src, dst)
 
 
 def stamps_of(img_dir: str) -> tuple[list[str], np.ndarray]:

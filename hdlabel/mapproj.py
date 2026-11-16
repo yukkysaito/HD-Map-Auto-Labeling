@@ -41,7 +41,7 @@ class Camera:
         self.cam, self.data = cam, data
         self.files, self.st = stamps_of(f"{data}/kf_cam{cam}")
         self.seg = [f"{data}/seg_cam{cam}/{s}.png" for s in self.st]
-        kd = os.path.dirname(os.path.realpath(self.files[0]))
+        kd = f"{data}/und_cam{cam}"  # K.json sits next to the undistorted frames (kf_cam may hold copies)
         self.K = np.array(json.load(open(f"{kd}/K.json"))["K"])
         self.ext = Extrinsic.load(f"{calib}/cam{cam}.json")
         self.poser = poser

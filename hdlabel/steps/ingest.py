@@ -6,11 +6,11 @@ VelocityReport: longitudinal_velocity, lateral_velocity, heading_rate), /tf_stat
 compressed image. Images are scaled and undistorted to a pinhole model on the fly (no raw copy is kept): cameras with
 `hfov` get a pinhole with that horizontal FoV (wide lenses), the others the valid-pixel crop (alpha 0). Configured
 cameras that are not in the bag are skipped.
-Keyframes (symlinks, used for segmentation and labelling): every --kf-dist m or --kf-yaw deg of wheel odometry.
+Keyframes (symlinks, or copies where the file system has none; used for segmentation and labelling): every --kf-dist m or --kf-yaw deg of wheel odometry.
 
 Writes DATA/:
   und_cam<N>/<stamp_ns>.jpg, und_cam<N>/K.json   undistorted images (stamp = image header stamp), pinhole K and size
-  kf_cam<N>/                                     keyframe symlinks into und_cam<N>
+  kf_cam<N>/                                     keyframe symlinks (or copies) into und_cam<N>
   gt.npy        [stamp, x, y, z, qx, qy, qz, qw]  base_link in the map frame (localization)
   wheel.npy     [stamp, v_long, v_lat, heading_rate]
   camera_info.json   K, D, model, size, frame per camera (original resolution)
@@ -36,7 +36,7 @@ from mcap_ros2.decoder import DecoderFactory
 from scipy.spatial.transform import Rotation as R
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
-from hdlabel.common import bag_ranges, load_yaml, stamps_of, tf_to_base
+from hdlabel.common import bag_ranges, link_file, load_yaml, stamps_of, tf_to_base
 
 
 def main(argv=None):
@@ -245,7 +245,7 @@ def main(argv=None):
         for f in os.listdir(kd):
             os.remove(f"{kd}/{f}")
         for i in keep:
-            os.symlink(f"../und_cam{c}/{os.path.basename(files[i])}", f"{kd}/{os.path.basename(files[i])}")
+            link_file(files[i], f"{kd}/{os.path.basename(files[i])}")
         counts[c] = dict(frames=len(files), keyframes=len(keep))
     missing = sorted(set(cams) - set(info))
     # data checks: localization gaps / jumps (samples there fail QA in export.py), camera frame gaps
