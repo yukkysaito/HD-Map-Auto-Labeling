@@ -1,0 +1,119 @@
+"""Agent layer without any model: replay provider, knowledge store, registry, benchmark lock / gate, verifier states."""
+
+import json
+import os
+
+import pytest
+import yaml
+
+from hdlabel.agents import bench, registry
+from hdlabel.agents.knowledge import Knowledge
+from hdlabel.agents.llm import Agents, BudgetExceeded, ProviderError, parse_json
+from hdlabel.agents.verify import judge_items, scene_state
+
+
+def test_parse_json_from_prose():
+    assert parse_json('Sure:\n```json\n{"a": [1, 2]}\n```') == {"a": [1, 2]}
+    assert parse_json('result {"items": {"0": {"decision": "ok"}}} done')["items"]["0"]["decision"] == "ok"
+    with pytest.raises(ValueError):
+        parse_json("no json here")
+
+
+def test_replay_cache_ledger_and_budget(tmp_path):
+    img = tmp_path / "a.jpg"
+    img.write_bytes(b"\xff\xd8fake")
+    table = tmp_path / "replay.json"
+    table.write_text(json.dumps({"*": {"items": {"0": {"decision": "drop", "confidence": 0.9, "reason": "shadow"}}}}))
+    ag = Agents(dict(roles=dict(verifier=dict(provider="replay")), replay=str(table)), str(tmp_path / "agent"))
+    assert ag.available("verifier")
+    rows = [dict(key="0", image=str(img), kind="curb", reason="spot", confidence=0.5, size_m=2.0)]
+    r = judge_items(ag, rows)
+    assert r["0"]["decision"] == "drop" and r["0"]["confidence"] == 0.9
+    judge_items(ag, rows)  # second time from the cache
+    led = [json.loads(x) for x in open(tmp_path / "agent" / "ledger.jsonl")]
+    assert [e["cached"] for e in led] == [False, True]
+    # a role without a provider fails clearly; the verifier turns failures into unsure
+    ag2 = Agents(dict(roles={}), str(tmp_path / "a2"))
+    assert not ag2.available("verifier")
+    with pytest.raises(ProviderError):
+        ag2.ask("verifier", "x")
+    assert judge_items(ag2, rows)["0"]["decision"] == "unsure"
+    ag3 = Agents(dict(roles=dict(r=dict(provider="claude_cli")), budget_usd=1), str(tmp_path / "a3"))
+    ag3.spent = 1.0
+    with pytest.raises(BudgetExceeded):
+        ag3.ask("r", "x", cache=False)
+
+
+def test_knowledge_search(tmp_path):
+    kb = Knowledge(str(tmp_path / "kb.sqlite"))
+    a = kb.add("problem", "curb on planter edges", "the segmentation calls planter edges curb", ["curb", "vectorize"])
+    kb.add("research", "LiDAR step check", "keep curbs with a height step", ["curb"], status="open")
+    assert kb.search("planter")[0]["id"] == a
+    assert {r["kind"] for r in kb.search("curb")} == {"problem", "research"}
+    assert kb.list(kind="research", status="open")[0]["title"] == "LiDAR step check"
+    b = kb.add("fix", "newer", "", ["curb"], supersedes=a)
+    assert kb.get(a)["status"] == "superseded" and kb.get(b)["supersedes"] == a
+    assert "planter" in kb.context("planter edges")
+
+
+def test_registry_overlay_adopt_rollback(tmp_path):
+    p = str(tmp_path / "registry.yaml")
+    reg = {"tools": {"vectorize": {"script": "hdlabel/steps/vectorize.py", "variants": {"default": {},
+                                                                                      "strict": {"markings": {"x": 1}}},
+                                   "active": "default", "history": []}}}  # fmt: skip
+    yaml.safe_dump(reg, open(p, "w"))
+    assert registry.overlay(registry.load(p)) == {}
+    registry.adopt("vectorize", "strict", None, "test", {"gain": 0.1}, path=p)
+    assert registry.overlay(registry.load(p)) == {"markings": {"x": 1}}
+    assert registry.rollback("vectorize", "test", path=p) == "default"
+    t = registry.load(p)["tools"]["vectorize"]
+    assert t["active"] == "default" and [h["active"] for h in t["history"]] == ["strict", "default"]
+    with pytest.raises(ValueError):
+        registry.with_variant(registry.load(p), "vectorize", "missing")
+
+
+def test_bench_lock_gate_and_majority(tmp_path, monkeypatch):
+    monkeypatch.setattr(bench, "bench_dir", lambda name: str(tmp_path / name))
+    d = tmp_path / "t"
+    os.makedirs(d / "evidence")
+    items = [dict(key="0", group="curb", ref="ok", split="dev", size_m=5.0, at=[0.0, 0.0], judges={"a": "ok", "b": "ok"}),
+             dict(key="1", group="curb", ref="wrong", split="holdout", size_m=3.0, at=[10.0, 0.0],
+                  judges={"a": "drop", "b": "off"})]  # fmt: skip
+    (d / "reference.json").write_text(json.dumps(dict(items=items)))
+    (d / "criteria.yaml").write_text(open(bench.CRITERIA).read())
+    with pytest.raises(RuntimeError):
+        bench.check_lock("t")
+    bench.lock("t", "person:test")
+    line = lambda x0, x1: {"type": "Feature", "properties": {"kind": "curb"},  # noqa: E731
+                           "geometry": {"type": "LineString", "coordinates": [[x0, 0.0, 0.0], [x1, 0.0, 0.0]]}}  # fmt: skip
+    base = {s: bench.evaluate("t", [line(-1, 1), line(9, 11)], [0.1, 0.5], split=s) for s in (None, "holdout")}
+    cand = {s: bench.evaluate("t", [line(-1, 1)], [0.1], split=s) for s in (None, "holdout")}
+    assert base[None]["curb"]["recall"] == 1.0 and base[None]["curb"]["fp"] == 1.0
+    assert cand[None]["curb"]["fp"] == 0.0 and cand[None]["curb"]["lidar"] == 1.0
+    g = bench.gate("t", {"all": base[None], "holdout": base["holdout"]}, {"all": cand[None], "holdout": cand["holdout"]},
+                   "curb.fp")  # fmt: skip
+    assert g["adopt"] and g["gain"] == 1.0
+    g2 = bench.gate("t", {"all": cand[None], "holdout": cand["holdout"]}, {"all": base[None], "holdout": base["holdout"]},
+                    "curb.fp")  # fmt: skip
+    assert not g2["adopt"]
+    (d / "criteria.yaml").write_text("min_improvement: 0\nno_regression: {}\n")  # tampering is detected
+    with pytest.raises(RuntimeError):
+        bench.check_lock("t")
+    assert bench.majority({"a": "ok", "b": "drop", "c": "off"}) == "wrong"
+    assert bench.majority({"a": "ok", "b": "drop", "c": "unsure"}) is None
+
+
+def test_scene_state_rules():
+    feat = {"type": "Feature", "properties": {"kind": "curb"},
+            "geometry": {"type": "LineString", "coordinates": [[0, 0, 0], [1, 0, 0], [2, 0, 0]]}}  # fmt: skip
+    ok = dict(kind="curb", at=[9.0, 9.0], why="random spot check", decision="ok", size_m=1.0)
+    rv = dict(checked=[ok] * 9, fixes=[dict(kind="curb", at=[1.0, 0.0], why="random spot check", decision="drop", drop=True)],
+              issues=[], tiles=[])  # fmt: skip
+    cfg = dict(max_unsure=5, reject_spot_wrong=5)
+    assert scene_state(rv, None, [feat], cfg)[0] == "needs_revision"  # the dropped curb is still in the vectors
+    assert scene_state(rv, None, [], cfg)[0] == "accepted"
+    bad = dict(rv, fixes=[dict(f, at=[float(i), 5.0]) for i, f in enumerate(rv["fixes"] * 5)])
+    assert scene_state(bad, None, [], cfg)[0] == "rejected"
+    geom = {"curb": {"profiles": 100, "step_within_0_3m": 0.1, "median_offset_m": 0.8}}
+    assert scene_state(rv, geom, [], cfg)[0] == "rejected"
+    assert scene_state(None, None, [], cfg, verifier_ok=False)[0] == "uncertain"

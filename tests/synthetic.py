@@ -11,6 +11,7 @@ usage: python tests/synthetic.py OUT_DIR   -> OUT_DIR/logs/<drive>/synthetic.mca
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 
@@ -217,7 +218,13 @@ scenes: {{length_m: 100, context_m: 40, corridor_m: 20}}
 dataset: {{every_s: 0.5, val_every_s: null, history_s: 1.0, history_dt_s: 0.5, bev: {{x: [-10, 40], y: [-15, 15], res: 0.2}},
           split: {{tile_m: 1000, val_every: 1000}}}}
 jobs: {{cpu: 2, gpu: 1}}
+agents:                       # no model in tests: a replay verifier that calls every element ok
+  roles: {{default: {{provider: replay}}, verifier: {{provider: replay}}, confirmer: {{provider: replay}}}}
+  replay: {out}/replay.json
 """
+REPLAY = {
+    "*": {"items": {"*": {"decision": "ok", "confidence": 1.0, "reason": "replay"}}, "tiles": {"*": {"missed": False}}}
+}
 
 
 def make(out: str) -> str:
@@ -227,6 +234,7 @@ def make(out: str) -> str:
     point_map(f"{out}/pointcloud_map.pcd")
     cfg = f"{out}/config.yaml"
     open(cfg, "w").write(CONFIG.format(out=os.path.abspath(out)))
+    json.dump(REPLAY, open(f"{out}/replay.json", "w"))
     return cfg
 
 

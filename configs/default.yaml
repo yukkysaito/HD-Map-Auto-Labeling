@@ -72,3 +72,20 @@ audit: {sample: 5, seed: 0, max_risk: 0.3, max_spot_error: 0.1}  # acceptance: s
 prune_frames: false           # true: after export delete frames neither the dataset nor labelling uses
 jobs: {cpu: 4, gpu: 1}        # parallel scenes / drives; GPU steps at once
 device: auto                  # torch device of the GPU steps: auto (cuda if available) / cuda / cuda:1 / cpu (slow; tests)
+
+# ---- agents (hdlabel/agents): which model plays which role. Providers: claude_cli, codex_cli, openai, anthropic,
+#      replay (hdlabel/agents/llm.py). Pick models by measurement: ./autolabel bench status | bench verifier --role R.
+agents:
+  roles:
+    default:    {provider: claude_cli, model: claude-sonnet-5-5}
+    verifier:   {provider: claude_cli, model: claude-sonnet-5-5}  # chosen on the benchmark (bench status: accuracy)
+    confirmer:  {provider: codex_cli, model: null}                # other vendor; must agree before a deletion
+    adjudicator: {provider: claude_cli, model: claude-sonnet-5-5}  # judge of the benchmark reference
+    researcher: {provider: claude_cli, model: claude-opus-5-5, timeout: 1800}
+    engineer:   {provider: claude_cli, model: claude-opus-5-5, timeout: 3600}
+  budget_usd: 30              # per run; calls stop (verifier -> uncertain) when spent
+  price_per_mtok: {codex_cli: 2.0}  # cost estimate for providers that report tokens only
+verification: {enabled: true, role: verifier, confirm_role: confirmer, max_rounds: 3, max_unsure: 5, reject_spot_wrong: 5, min_curb_step: 0.35, jobs: 4}
+evolve: {min_cases: 5, max_attempts: 2,   # ./autolabel evolve: problems with >= min_cases issues; give up after N failed attempts
+         targets: {"curb:false_positive": curb.fp, "curb:offset": curb.lidar, "marking:false_positive": marking.fp,
+                   "marking:missed": marking.recall}}  # benchmark metric each problem type must improve

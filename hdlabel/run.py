@@ -52,6 +52,8 @@ STEPS = os.path.join(ROOT, "hdlabel", "steps")
 EVAL = os.path.join(ROOT, "hdlabel", "eval")
 
 
+AGENT_COMMANDS = ("kb", "tools", "bench", "experiment", "impact", "evolve", "train")
+
 # config keys a project config replaces as a whole (a camera list is not merged with the default one)
 REPLACE = ("cameras",)
 
@@ -65,9 +67,13 @@ def merge(base: dict, over: dict) -> dict:
     return out
 
 
-def load_config(path=None, **override) -> dict:
-    """configs/default.yaml <- the project config (path) <- command line values (not None)."""
-    c = merge(load_yaml(DEFAULT_CONFIG), load_yaml(path) if path else {})
+def load_config(path=None, registry=None, **override) -> dict:
+    """configs/default.yaml <- active tool variants (tools/registry.yaml, or the given registry dict) <- the project
+    config (path) <- command line values (not None)."""
+    from hdlabel.agents import registry as reg
+
+    c = merge(load_yaml(DEFAULT_CONFIG), reg.overlay(registry))
+    c = merge(c, load_yaml(path) if path else {})
     return merge(c, {k: v for k, v in override.items() if v is not None})
 
 
@@ -107,6 +113,9 @@ class Area:
         self.lock = threading.Lock()
         self.gpu = threading.Semaphore(c.get("jobs", {}).get("gpu", 1))
         self.status = json.load(open(f"{self.out}/status.json")) if os.path.exists(f"{self.out}/status.json") else {}
+        from hdlabel.agents.llm import Agents
+
+        self.agents = Agents(c.get("agents", {}), f"{self.out}/agent")  # models of the agent roles, cache, ledger
 
     def data(self, d):
         return f"{self.work}/drives/{d}"
@@ -192,20 +201,35 @@ def class_map(area) -> str:
     return json.dumps(cm, sort_keys=True) if cm else ""
 
 
+DRY_RUN = None  # a list: step() only records (tag, script) of the steps that would run
+DRY_RUN_OUT = set()  # their outputs (steps reading them would run too)
+
+
 def step(area, tag, script, args, outputs, inputs=(), gpu=False, force=False):
     """run hdlabel/steps|eval/<script> with args unless done: every output exists, newer than every input, and the
     arguments and code are those of the last successful run (work/stamps/<tag>.json). Logs to debug/logs/<tag>.log."""
     args = [str(x) for x in args]
     stamp = f"{area.work}/stamps/{tag}.json"
-    key = [script, args, code_version(script)] + ([class_map(area)] if class_map(area) else [])
+    rel = [a.replace(area.out, "<OUT>") for a in args]  # keys do not depend on where the output root is (experiments)
+    key = [os.path.relpath(script, ROOT), rel, code_version(script)] + ([class_map(area)] if class_map(area) else [])
     key = hashlib.sha1(json.dumps(key).encode()).hexdigest()
-    if (
+    old = [script, args, code_version(script)] + ([class_map(area)] if class_map(area) else [])  # stamps before 0.4
+    old = hashlib.sha1(json.dumps(old).encode()).hexdigest()
+    done = (
         not force
         and os.path.exists(stamp)
-        and json.load(open(stamp)).get("key") == key
+        and json.load(open(stamp)).get("key") in (key, old)
         and all(map(os.path.exists, outputs))
         and min(map(mtime, outputs)) >= max([mtime(i) for i in inputs] + [0])
-    ):
+    )
+    if DRY_RUN is not None:  # impact analysis: record what would run (and what follows from its outputs)
+        if not done or any(i in DRY_RUN_OUT for i in inputs):
+            DRY_RUN.append((tag, os.path.relpath(script, ROOT)))
+            DRY_RUN_OUT.update(outputs)
+        return True
+    if done:
+        if json.load(open(stamp)).get("key") != key:
+            json.dump(dict(json.load(open(stamp)), key=key), open(stamp, "w"))
         return True
     log = f"{area.dbg}/logs/{tag}.log"
     with area.gpu if gpu else _null(), open(log, "w") as f:
@@ -634,9 +658,14 @@ def debug(area, s, force):
             area.review_file(s["id"]),
             "--others",
             *area.reviews(),
+            *(
+                ["--suspects", f"{area.dbg}/model_suspects.json"]
+                if os.path.exists(f"{area.dbg}/model_suspects.json")
+                else []
+            ),
         ],
         [f"{D}/review.html"],
-        [f"{ds}/scene.json"] + area.reviews(),
+        [f"{ds}/scene.json"] + area.reviews() + [f"{area.dbg}/model_suspects.json"],
         gpu=True,
         force=force,
     )
@@ -661,6 +690,24 @@ def debug(area, s, force):
         force=force,
     )
     return json.load(open(f"{D}/geom_check.json")).get("summary")
+
+
+def verify(area, s, force):
+    """verification agent (hdlabel/agents/verify.py): judge the scene's open evidence items, apply the decisions,
+    state accepted / needs_revision / rejected / uncertain -> debug/scenes/<scene>/verification.json."""
+    from hdlabel.agents.verify import verify_scene
+
+    sid = s["id"]
+    D = area.dbg_dir(sid)
+    if not os.path.exists(f"{D}/check/items.json"):
+        raise StepError(f"{sid}: no evidence pack (debug step)", None)
+    o = area.owners.get(sid, sid)
+    r = verify_scene(area.agents, f"{D}/check", area.review_file(sid), f"{D}/reviewed", f"{D}/geom_check.json",
+                     f"{area.scene_dir(o)}/vectors/vectors.geojson", f"{D}/verification.json",
+                     area.cfg.get("verification", {}))  # fmt: skip
+    nd = r["new_decisions"].get("items", {})
+    new = f"{len(nd)} items decided ({sum(v['decision'] != 'ok' for v in nd.values())} not ok), " if nd else ""
+    return f"{new}{r['state']}: {'; '.join(r['reasons'])}"
 
 
 def qa(area, s, force):
@@ -771,17 +818,36 @@ def scene_split(area, s):
     return ("val" if ((ix * 73856093) ^ (iy * 19349663)) % every == 0 else "train"), [ix, iy]
 
 
+def lineage(area) -> dict:
+    """what made the data: code commit, tool variants + code hashes, agent models + prompt versions, benchmark lock."""
+    from hdlabel.agents import registry
+    from hdlabel.agents.verify import prompt_version
+
+    git = lambda *c: subprocess.run(["git", *c], cwd=ROOT, capture_output=True, text=True).stdout.strip()  # noqa: E731
+    lk = f"{ROOT}/bench/{area.name}/LOCK.json"
+    return dict(commit=git("rev-parse", "--short", "HEAD"), dirty=bool(git("status", "--porcelain", "--untracked-files=no")),
+                tools=registry.versions(), agents=area.cfg.get("agents", {}).get("roles"),
+                prompts=dict(verifier=prompt_version()),
+                bench=json.load(open(lk))["data"][:12] if os.path.exists(lk) else None)  # fmt: skip
+
+
 def dataset_index(area):
     """dataset/dataset.json: format, classes, default BEV, scenes with split and sample counts (the training entry point)."""
     from hdlabel.common import CLASSES
     from hdlabel.loader import ARROW_DIRECTIONS, VECTOR_CLASSES
 
-    out = []
+    out, excluded = [], []
+    gate = area.debug and area.cfg.get("verification", {}).get("enabled", True)
     for s in area.scenes():
         f = f"{area.ds_dir(s['id'])}/scene.json"
         if not os.path.exists(f):
             continue
         sc = json.load(open(f))
+        vf = f"{area.dbg_dir(s['id'])}/verification.json"
+        v = json.load(open(vf)) if os.path.exists(vf) else dict(state="unverified", reasons=[])
+        if gate and v["state"] != "accepted":  # only verified data is training data
+            excluded.append(dict(scene=s["id"], state=v["state"], reasons=v.get("reasons", [])))
+            continue
         split, tile = scene_split(area, s)
         out.append(
             dict(
@@ -794,6 +860,7 @@ def dataset_index(area):
                 tile=tile,
                 bags=sc["bags"],
                 t_range=s["t_range"],
+                verification=dict(state=v["state"], verifier=v.get("verifier"), prompt=v.get("prompt")),
             )
         )
     n = {k: sum(o["qa_ok"] for o in out if o["split"] == k) for k in ("train", "val")}
@@ -809,7 +876,10 @@ def dataset_index(area):
         samples=sum(o["samples"] for o in out),
         qa_ok=sum(o["qa_ok"] for o in out),
         scenes=out,
+        excluded=excluded,
+        lineage=lineage(area),
     )
+    idx["version"] = hashlib.sha1(json.dumps(idx, sort_keys=True).encode()).hexdigest()[:12]
     os.makedirs(area.dataset, exist_ok=True)
     f = f"{area.dataset}/dataset.json"  # unchanged: keep its time (statistics are not redone)
     if not os.path.exists(f) or json.load(open(f)) != json.loads(json.dumps(idx)):
@@ -940,15 +1010,18 @@ def main():
             "export",
             "debug",
             "qa",
+            "verify",
             "audit",
             "status",
             "prune",
             "validate",
             "review",
             "signoff",
+            *AGENT_COMMANDS,
         ],
     )
     p.add_argument("config", nargs="?", help="project config (overrides configs/default.yaml); validate: dataset.json")
+    p.add_argument("rest", nargs="*", help="agent commands: action and arguments (hdlabel/agents/cli.py)")
     p.add_argument("--map", help="point cloud map (.pcd)")
     p.add_argument("--logs", nargs="+", help="globs: log directories (one drive each) or .mcap files")
     p.add_argument(
@@ -970,7 +1043,22 @@ def main():
     p.add_argument("--decisions", help="review: decisions on the scene's evidence pack (docs/AGENT_REVIEW.md)")
     p.add_argument("--partial", action="store_true", help="review: apply although some items have no decision")
     p.add_argument("--signoff", help="signoff: the json saved by debug/audit.html")
+    for o in ("--by", "--role", "--id", "--variant", "--overlay", "--code", "--target", "--note", "--kind", "--title",
+              "--text", "--tags", "--budget", "--loop"):  # fmt: skip
+        p.add_argument(o, help="agent commands (hdlabel/agents/cli.py)")
+    for o in ("--adopt", "--rebase", "--scan", "--dry"):
+        p.add_argument(o, action="store_true", help="agent commands (hdlabel/agents/cli.py)")
     a = p.parse_args()
+    if a.command in AGENT_COMMANDS:  # ./autolabel bench build CONFIG: the action words are not the config
+        words = [x for x in [a.config, *a.rest] if x is not None]
+        cfgs = [x for x in words if x.endswith((".yaml", ".yml"))]
+        a.config, a.rest = (cfgs[0] if cfgs else None), [x for x in words if x not in cfgs]
+        if a.command == "kb":
+            from hdlabel.agents.cli import kb_path
+            from hdlabel.agents.knowledge import main as kb
+
+            opts = sum(([f"--{k}", str(getattr(a, k))] for k in ("kind", "title", "text", "tags") if getattr(a, k)), [])
+            return kb(a.rest + opts, kb_path())
     if a.command == "validate":
         from hdlabel.validate import main as validate
 
@@ -980,6 +1068,11 @@ def main():
         debug=False if a.no_debug else None,
     )
     cmd = a.command
+    if cmd in AGENT_COMMANDS:
+        from hdlabel.agents import cli
+
+        area.owners = label_owners(area, area.scenes()) if area.scenes() else {}
+        return getattr(cli, f"{cmd}_cmd")(area, a)
     if cmd == "status":
         return status(area)
     if cmd == "review":
@@ -1083,7 +1176,26 @@ def main():
             failed.add("dataset_stats")
     if (cmd == "run" and area.debug) or cmd == "debug":
         each("debug", debug, pick(), lambda s: s["id"])
-    if (cmd == "run" and area.debug) or cmd in ("debug", "audit"):
+    vcfg = area.cfg.get("verification", {})
+    if (cmd == "run" and area.debug and vcfg.get("enabled", True)) or cmd == "verify":
+        # data improvement loop: verify -> apply the deletions (label / export / debug again) -> verify again
+        for rnd in range(int(vcfg.get("max_rounds", 3))):
+            ok = [s for s in pick() if s["id"] not in failed]
+            each(f"verify (round {rnd + 1})", verify, ok, lambda s: s["id"])
+            states = {s["id"]: json.load(open(f"{area.dbg_dir(s['id'])}/verification.json"))["state"]
+                      for s in ok if os.path.exists(f"{area.dbg_dir(s['id'])}/verification.json")}  # fmt: skip
+            todo = [s for s in ok if states.get(s["id"]) == "needs_revision"]
+            print("  states: " + ", ".join(f"{k} {sum(v == k for v in states.values())}" for k in
+                                           ("accepted", "needs_revision", "rejected", "uncertain")))  # fmt: skip
+            if not todo:
+                break
+            ids = {s["id"] for s in todo} | {area.owners.get(s["id"], s["id"]) for s in todo}
+            each("revise: label", label, [s for s in area.scenes() if s["id"] in ids], lambda s: s["id"])
+            each("revise: export", export, todo, lambda s: s["id"])
+            dataset_index(area)
+            each("revise: debug", debug, todo, lambda s: s["id"])
+        dataset_index(area)  # the training data = accepted scenes
+    if (cmd == "run" and area.debug) or cmd in ("debug", "audit", "verify"):
         print("== audit")
         do_audit(area)
     if cmd == "qa":

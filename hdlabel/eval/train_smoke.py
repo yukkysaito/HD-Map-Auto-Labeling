@@ -168,16 +168,38 @@ def main():
     union = torch.zeros(NC)
     pi = torch.zeros(NC)
     pu = torch.zeros(NC)
+    per_scene, disagree = {}, []  # failure analysis (hdlabel/agents/training.py)
+    cell = a.cell
     with torch.no_grad():
         for i in np.linspace(0, len(va) - 1, min(a.val, len(va))).astype(int):
             x = collate([va[i]])
             y = down(x["bev_cls"], f)[0]
             m = y > 0
-            pr = net(x)[0, 1:].argmax(0).cpu() + 1
+            prob = net(x)[0, 1:].float().softmax(0).cpu()
+            pr = prob.argmax(0) + 1
+            sid, rec = va.items[i]
+            ps = per_scene.setdefault(sid, dict(inter=torch.zeros(NC), union=torch.zeros(NC)))
             for c in range(1, NC):
-                for pred, I, U in ((pr, inter, union), (prior_cls, pi, pu)):
+                for pred, I, U in ((pr, inter, union), (prior_cls, pi, pu), (pr, ps["inter"], ps["union"])):
                     I[c] += ((pred == c) & (y == c) & m).sum()
                     U[c] += (((pred == c) | (y == c)) & m).sum()
+            # confident disagreements on thin classes: the model says c, the label (observed) says otherwise, or the
+            # reverse; their map positions go to the verification queue - evidence decides, never the model
+            for c in (CLASSES.index("marking"), CLASSES.index("crosswalk"), CLASSES.index("curb")):
+                for kind, mask in (("model_only", (pr == c) & (prob[c - 1] > 0.8) & m & (y != c)),
+                                   ("label_only", (y == c) & (prob[c - 1] < 0.05))):  # fmt: skip
+                    n_, lab = cv2.connectedComponents(mask.numpy().astype(np.uint8))
+                    for k in range(1, n_):
+                        ii, jj = np.nonzero(lab == k)
+                        if len(ii) * cell * cell < 2.0:
+                            continue
+                        ex = bev["x"][1] - (ii.mean() + 0.5) * cell  # row 0 = far, col 0 = left (bev.grid)
+                        ey = bev["y"][1] - (jj.mean() + 0.5) * cell
+                        T = np.array(rec["T_map_base"])
+                        mx, my = (T @ np.array([ex, ey, 0.0, 1.0]))[:2]
+                        disagree.append(dict(scene=sid, sample=int(i), cls=CLASSES[c], type=kind,
+                                             area_m2=round(len(ii) * cell * cell, 1), map_xy=[round(float(mx), 2), round(float(my), 2)],
+                                             ego_xy=[round(float(ex), 1), round(float(ey), 1)]))  # fmt: skip
     res = dict(
         steps=a.steps,
         train_samples=len(tr),
@@ -200,6 +222,11 @@ def main():
     res["scenes"] = a.scenes
     res["eval_split"] = a.eval_split
     res["init"] = a.init
+    res["val_scene_iou"] = {
+        sid: {CLASSES[c]: round(float(v["inter"][c] / v["union"][c]), 3) for c in range(1, NC - 1) if v["union"][c] > 0}
+        for sid, v in per_scene.items()
+    }
+    res["disagreements"] = disagree
     json.dump(res, open(f"{out}/train_smoke{tag}.json", "w"), indent=1)
     torch.save(
         dict(state=net.state_dict(), cams=tr.cams, cell=a.cell, bev=bev, history=a.history),
@@ -218,7 +245,7 @@ def main():
         f"{out}/train_smoke{tag}_examples.png",
         cv2.resize(np.vstack(tiles)[..., ::-1], None, fx=2, fy=2, interpolation=cv2.INTER_NEAREST),
     )
-    print(json.dumps(res, indent=1))
+    print(json.dumps({k: v for k, v in res.items() if k != "disagreements"}, indent=1))
 
 
 if __name__ == "__main__":

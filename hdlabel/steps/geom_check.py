@@ -24,7 +24,41 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from hdlabel.bev import _dens
 from hdlabel.common import CLASSES, PALETTE, VEC_COLOR
 from hdlabel.mapproj import arrow_cls, load_arrows
+from hdlabel.review_html import element_at
 from hdlabel.surface import map_files, read_pcd, write_pcd
+
+
+def curb_offsets(coords, Q, qtree, every=1.0, min_step=0.07) -> list:
+    """height profiles across a curb line every `every` m in the raw LiDAR points Q (cKDTree qtree on xy): for each
+    profile (point, distance from the line to the nearest height change > min_step over 0.5 m; inf = none). Profiles
+    with too few map points are left out. A kerb is a step; a painted line, a planter edge seen from the road at the
+    same height, a flat transition are not."""
+    P, _ = _dens(coords, 0.2)
+    n = max(1, int(round(every / 0.2)))
+    out = []
+    for i in range(5, len(P) - 5, n):
+        t = P[i + 5, :2] - P[i - 5, :2]
+        t /= np.linalg.norm(t) + 1e-9
+        nrm = np.array([-t[1], t[0]])
+        idx = qtree.query_ball_point(P[i, :2], 2.2)
+        d = Q[idx, :2] - P[i, :2]
+        u, v = d @ t, d @ nrm
+        z = Q[idx, 2]
+        k = (np.abs(u) < 0.75) & (np.abs(v) < 2.0) & (np.abs(z - P[i, 2]) < 0.6)
+        u, v, z = u[k], v[k], z[k]
+        bins = np.arange(-2.0, 2.01, 0.25)
+        zb = np.full(len(bins) - 1, np.nan)
+        for b in range(len(bins) - 1):
+            kk = (v >= bins[b]) & (v < bins[b + 1])
+            if kk.sum() >= 3:
+                zb[b] = np.percentile(z[kk], 20)
+        jump = np.abs(zb[2:] - zb[:-2])
+        pos = bins[1:-2] + 0.25  # height change over 0.5 m, at the bin edge
+        ok = np.isfinite(jump) & (jump > min_step)
+        if np.isfinite(zb).sum() < 8:
+            continue  # too few map points to judge
+        out.append((P[i], float(np.min(np.abs(pos[ok]))) if ok.any() else np.inf))
+    return out
 
 
 def main(argv=None):
@@ -56,39 +90,23 @@ def main(argv=None):
     bb0, bb1 = origin[:2] + lo, origin[:2] + lo + np.array(H.shape) * sres
     Q = Q[np.all((Q[:, :2] > bb0) & (Q[:, :2] < bb1), 1)]
     qtree = cKDTree(Q[:, :2])
-    offs, curbs = [], []
+    offs, curbs, per_curb = [], [], []
     for f in feats:
         if f["properties"]["kind"] != "curb":
             continue
-        P, _ = _dens(f["geometry"]["coordinates"], 0.2)
-        for i in range(5, len(P) - 5, 5):  # every 1 m: profile across the curb
-            t = P[i + 5, :2] - P[i - 5, :2]
-            t /= np.linalg.norm(t) + 1e-9
-            nrm = np.array([-t[1], t[0]])
-            idx = qtree.query_ball_point(P[i, :2], 2.2)
-            d = Q[idx, :2] - P[i, :2]
-            u, v = d @ t, d @ nrm
-            z = Q[idx, 2]
-            k = (np.abs(u) < 0.75) & (np.abs(v) < 2.0) & (np.abs(z - P[i, 2]) < 0.6)
-            u, v, z = u[k], v[k], z[k]
-            bins = np.arange(-2.0, 2.01, 0.25)
-            zb = np.full(len(bins) - 1, np.nan)
-            for b in range(len(bins) - 1):
-                kk = (v >= bins[b]) & (v < bins[b + 1])
-                if kk.sum() >= 3:
-                    zb[b] = np.percentile(z[kk], 20)
-            jump = np.abs(zb[2:] - zb[:-2])
-            pos = bins[1:-2] + 0.25  # height change over 0.5 m, at the bin edge
-            ok = np.isfinite(jump) & (jump > 0.07)
-            if np.isfinite(zb).sum() < 8:
-                continue  # too few map points to judge
-            offs.append(float(np.min(np.abs(pos[ok]))) if ok.any() else np.inf)
-            curbs.append((P[i], offs[-1]))
+        o = curb_offsets(f["geometry"]["coordinates"], Q, qtree)
+        offs += [x for _, x in o]
+        curbs += o
+        if o:
+            per_curb.append(
+                dict(at=element_at(f), profiles=len(o), step_share=round(float(np.mean([x <= 0.3 for _, x in o])), 3))
+            )
     offs = np.array(offs)
     res_["curb"] = dict(
         profiles=int(len(offs)),
         step_within_0_3m=round(float((offs <= 0.3).mean()), 3) if len(offs) else None,
         median_offset_m=round(float(np.median(np.minimum(offs, 2.0))), 3) if len(offs) else None,
+        per_curb=per_curb,  # per curb element: share of its profiles with a step within 0.3 m (verification input)
     )
 
     # ---- vector heights vs. LiDAR ground points

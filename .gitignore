@@ -7,3 +7,6 @@ review/
 .venv/
 __pycache__/
 *.pyc
+# local benchmark (reference with map coordinates) and agent knowledge store
+bench/
+knowledge/

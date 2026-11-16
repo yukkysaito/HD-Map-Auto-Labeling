@@ -1,0 +1,149 @@
+# Tool registry: the tools the agents choose from, improve and replace (hdlabel/agents/registry.py).
+#
+# Per tool: what it does, its interface, how it is run, its model / algorithm, where it is good / bad, cost, license and
+# dependencies. `variants` are config overlays (keys of configs/default.yaml) that switch the tool's model / algorithm /
+# parameters; `active` is the variant every job uses (applied between configs/default.yaml and the project config),
+# `history` records each adoption with its benchmark evidence (./autolabel tools rollback <tool> goes back one).
+# Code versions are not written here: they are the hash of the tool's code (run.code_version), stored with every job.
+# The agents edit this file only through `./autolabel tools adopt|rollback` (gated by the protected benchmark).
+
+tools:
+  ingest:
+    purpose: rosbags -> undistorted camera images, poses, calibration, keyframes, data checks
+    stage: drive
+    script: hdlabel/steps/ingest.py
+    inputs: [rosbag (mcap) with poses, /tf_static, camera_info, compressed images]
+    outputs: [und_cam*/ images, gt.npy poses, camera_info.json, kf_cam*/ keyframes, ingest.json]
+    config: [topics, cameras, image_scale, jpeg_quality]
+    algorithm: one pass over the bags, OpenCV undistortion to pinhole (wide lenses get the configured hfov)
+    good: [Autoware topic layout, any camera count]
+    bad: [bags without /tf_static need tf_static from config]
+    cost: ~1 min per minute of driving (CPU, I/O bound)
+    license: Apache-2.0 (code); deps BSD/MIT
+    deps: [mcap, mcap-ros2-support, opencv-python-headless]
+    variants: {default: {}}
+    active: default
+    history: []
+
+  segment:
+    purpose: per-pixel classes of every keyframe (road, marking, crosswalk, manhole, curb, sidewalk, offroad, vertical)
+    stage: drive
+    script: hdlabel/steps/segment.py
+    writes: ["seg_cam*", seg_done.json]
+    inputs: [kf_cam*/ keyframes]
+    outputs: [seg_cam*/<stamp>.png class ids, seg_done.json]
+    config: [segmentation]
+    algorithm: Mask2Former Swin-L trained on Mapillary Vistas (semantic, 65 classes), half-resolution images
+    model: {id: facebook/mask2former-swin-large-mapillary-vistas-semantic, year: 2022}
+    good: [lane lines and crosswalks on dark asphalt, curbs next to sidewalks, day light]
+    bad: [blobby masks of small markings (arrows lose their heads, arrows.py compensates), faint / worn paint, light
+          concrete surfaces, red crosswalk stripes, kerb of brick plazas]
+    cost: ~0.25 s per image on an RTX 5070 (GPU, 6 GB)
+    license: "model weights CC BY-NC 4.0 (trained on Mapillary Vistas, research license): non-commercial; swap for
+             commercial use (README: third-party models)"
+    deps: [transformers, torch]
+    variants: {default: {}}
+    active: default
+    history: []
+
+  surface:
+    purpose: 3D road surface of the ego road level from the LiDAR point cloud map (multi-level safe)
+    stage: scene
+    script: hdlabel/steps/map_surface.py
+    inputs: [point cloud map, trajectories]
+    outputs: [surface/map_ground.npz height grid]
+    config: [scenes]
+    algorithm: height layers + connectivity from the trajectory (bridges / decks separated)
+    good: [elevated roads, slopes]
+    bad: [areas the LiDAR map does not cover]
+    cost: ~10 s per scene (CPU)
+    license: Apache-2.0
+    deps: [numpy, scipy]
+    variants: {default: {}}
+    active: default
+    history: []
+
+  project:
+    purpose: fuse the segmentations of all keyframes of all drives on the surface -> 0.1 m label map + ortho image
+    stage: scene
+    script: hdlabel/steps/project_labels.py
+    inputs: [surface, seg_cam*, calib]
+    outputs: [labels/ground_map.npz (cls, votes, n, rgb)]
+    config: [fusion]
+    algorithm: per-cell vote of projected classes, distance weighted
+    good: [multi-drive fusion, occlusions by cars average out]
+    bad: [thin far lines get few votes; vertical things project onto the ground at their base]
+    cost: ~1 min per scene (GPU)
+    license: Apache-2.0
+    deps: [torch]
+    variants: {default: {}}
+    active: default
+    history: []
+
+  arrows:
+    purpose: turn arrows with their shape and direction from sharp single frames
+    stage: scene
+    script: hdlabel/steps/arrows.py
+    inputs: [label map, keyframes]
+    outputs: [labels/arrows.json]
+    config: [markings.arrow_templates]
+    algorithm: candidate blobs -> sharp ground patches -> template matching (regional template set)
+    good: [Japanese arrow shapes]
+    bad: [other regions' shapes need their template set]
+    cost: ~30 s per scene (CPU)
+    license: Apache-2.0
+    deps: [opencv-python-headless]
+    variants: {default: {}}
+    active: default
+    history: []
+
+  vectorize:
+    purpose: label map -> 3D vector elements (lane_line, stop_line, crosswalk, marking_area, arrow, curb, boundary)
+    stage: scene
+    script: hdlabel/steps/vectorize.py
+    inputs: [labels/ground_map.npz, arrows.json, review fixes]
+    outputs: [vectors/vectors.geojson]
+    config: [markings]
+    algorithm: skeletons / contours of the voted classes, gap joining, confidence from the vote share, fragment filter
+    good: [painted lines, crosswalks]
+    bad: [curb lines on planter edges / building walls (the segmentation calls them curb), short fragments]
+    cost: ~20 s per scene (CPU)
+    license: Apache-2.0
+    deps: [scikit-image, shapely]
+    variants: {default: {}}
+    active: default
+    history: []
+
+  geom_check:
+    purpose: verification without cameras - curbs vs LiDAR height steps, vector height vs LiDAR ground
+    stage: verify
+    script: hdlabel/steps/geom_check.py
+    inputs: [vectors, point cloud map]
+    outputs: [debug/scenes/<s>/geom_check.json]
+    algorithm: height profiles across each curb every 1 m (step > 7 cm within 0.3 m)
+    good: [systematic shifts (calibration / time offset), curbs that are not kerbs]
+    bad: [sparse LiDAR maps, low kerbs < 7 cm]
+    cost: ~10 s per scene (CPU)
+    license: Apache-2.0
+    deps: [scipy]
+    variants: {default: {}}
+    active: default
+    history: []
+
+  verifier:
+    purpose: independent visual verification of the extracted elements on evidence images (map + 2 camera views)
+    stage: verify
+    script: hdlabel/agents/verify.py
+    inputs: [debug/scenes/<s>/check (evidence pack), geom checks]
+    outputs: [review/<name>/<s>.json, debug/scenes/<s>/verification.json]
+    config: [agents.roles.verifier, verification]
+    algorithm: vision LLM judges each item (ok / drop / off / unsure) with the fixed criteria (prompts/verifier.md),
+               combined with the LiDAR checks; another vendor than the annotator by default
+    good: [false positives (shadows, seams, planters), missed paint in map tiles]
+    bad: [blurred far views; small offsets < 0.3 m]
+    cost: one LLM call per 5 items
+    license: depends on the provider's terms
+    deps: [an agent CLI or API (hdlabel/agents/llm.py)]
+    variants: {default: {}}
+    active: default
+    history: []

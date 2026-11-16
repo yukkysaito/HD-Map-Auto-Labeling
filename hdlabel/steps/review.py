@@ -40,6 +40,7 @@ def main(argv=None):
     p.add_argument(
         "--others", nargs="*", default=[], help="the other review files: what they decided is not asked again"
     )
+    p.add_argument("--suspects", help="model_suspects.json (agents/training.py): places to verify from the evidence")
     p.add_argument("--n", type=int, default=3, help="samples per scene")
     p.add_argument("--width", type=int, default=560)
     a = p.parse_args(argv)
@@ -249,6 +250,27 @@ def main(argv=None):
     sc = evidence.Scene(a.dataset, a.ortho or f"{a.out}/ortho.jpg", siblings)
     shown = [f for f in features if review_html.GROUP.get(f["properties"]["kind"]) in evidence.COLOR]
     tiles = [] if reviewed else evidence.map_tiles(sc, scene_id)
+    if a.suspects and os.path.exists(a.suspects):  # where the trained model disagrees with the labels
+        lo, res, org = m["lo"], float(m["res"]), m["origin"]
+        hi = lo + np.array(cls.shape) * res
+        done_tiles = [t["center"] for r in [review] + others if r for t in r.get("tiles", [])]
+        for sp in json.load(open(a.suspects)):
+            p_ = np.array(sp["map_xy"]) - org[:2]
+            if not np.all((p_ > lo) & (p_ < hi)):
+                continue
+            if sp["type"] == "model_only":  # possibly missed paint: a map tile around it
+                if not any(np.abs(np.subtract(c, sp["map_xy"])).max() < 10 for c in done_tiles + tiles):
+                    tiles.append([round(float(v), 2) for v in sp["map_xy"]])
+                continue
+            grp = "curb" if sp["cls"] == "curb" else "marking"
+            near = [
+                i for i, e in enumerate(rels) if e["group"] == grp and np.hypot(*np.subtract(e["at"], sp["map_xy"])) < 3
+            ]
+            for i in near[:1]:
+                if not any(review_html.decided(r, rels[i]["kind"], rels[i]["at"]) for r in [review] + others if r) \
+                        and not any(it["at"] == rels[i]["at"] for it in items):  # fmt: skip
+                    items.append(dict(feature=features[rels[i]["src"]], group=grp, at=rels[i]["at"],
+                                      reason=f"model disagreement ({sp['samples']} samples)"))  # fmt: skip
     evidence.write_pack(a.out, sc, shown, items, tiles, review_html.GROUP)
     print(f"review sheets -> {a.out} ({len(els)} numbered elements, review.html)")
 

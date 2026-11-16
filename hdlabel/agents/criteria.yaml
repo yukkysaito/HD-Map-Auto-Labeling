@@ -1,0 +1,11 @@
+# Adoption gate of the protected benchmark (hdlabel/agents/bench.py gate). Copied into bench/<name>/criteria.yaml
+# and locked with the reference; a candidate tool version is adopted only if every metric below stays within its
+# tolerance of the current version (on all reference elements AND on the holdout split) and its target metric improves
+# by at least min_improvement. recall / lidar: higher is better; fp: lower is better.
+min_improvement: 0.03
+no_regression:
+  marking.recall: 0.02
+  marking.fp: 0.03
+  curb.recall: 0.03
+  curb.fp: 0.03
+  curb.lidar: 0.02

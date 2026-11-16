@@ -520,20 +520,28 @@ def main(argv=None):
                 else [q[:2] for q in f["geometry"]["coordinates"]],
             )
         )
+        from hdlabel.review_html import element_at
+
         drop = set()
         for fx in fixes:
+            # nearest element of the kind; among those touching the point (pieces meeting at a junction) the one whose
+            # reference point (review_html.element_at, what the review recorded) is the point
             cand = [
-                (geom(f).distance(shapely.Point(fx["at"])), i)
+                (d > 0.05, d if d > 0.05 else float(np.hypot(*np.subtract(element_at(f), fx["at"]))), i)
                 for i, f in enumerate(feats)
                 if f["properties"]["kind"] == fx["kind"]
+                for d in [geom(f).distance(shapely.Point(fx["at"]))]
             ]
-            if not cand or min(cand)[0] > 1.5:
+            if not cand or min(cand)[0] and min(cand)[1] > 1.5:
                 continue  # not in this scene's vectors
-            i = min(cand)[1]
+            best = min(cand)
+            # pieces whose reference point is exactly the point are all "the element at the point" of the review
+            hit = [c[2] for c in cand if not c[0] and c[1] < 0.05] if not best[0] and best[1] < 0.05 else [best[2]]
             applied += 1
-            if fx.get("drop"):
-                drop.add(i)
-            feats[i]["properties"].update(fx.get("set", {}), reviewed=True)
+            for i in hit:
+                if fx.get("drop"):
+                    drop.add(i)
+                feats[i]["properties"].update(fx.get("set", {}), reviewed=True)
         feats = [f for i, f in enumerate(feats) if i not in drop]
 
     # ---- per element: confidence = mean vote share of its class over its cells, observations = median number of
