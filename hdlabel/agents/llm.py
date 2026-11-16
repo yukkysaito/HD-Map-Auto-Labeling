@@ -1,7 +1,10 @@
 """Provider-independent access to the agent models (Claude, ChatGPT, ...): one call = a prompt + images -> text / JSON.
 
-A role (verifier, annotator, researcher, engineer, ...) is mapped to a provider and a model in the config (`agents.roles`),
-so a better model is used by changing one line, and the annotation and the verification can use different vendors.
+A role (verifier, annotator, researcher, engineer, ...) is mapped to a provider and a model in the config: `agents.plan`
+picks a set of roles from `agents.plans` (`subscription`: the Claude Code / Codex CLIs logged in with a plan, the default;
+`api`: the API keys, paid per token), `agents.roles` overrides single roles. The environment variable HDLABEL_AGENT_PLAN
+overrides `agents.plan`. A better model is used by changing one line, and the annotation and the verification can use
+different vendors.
 
 Providers (add one by writing a function `_<name>(model, system, prompt, images, tools, timeout) -> Reply`):
   claude_cli    Claude Code in headless mode (`claude -p`); images are read with its Read tool; tools e.g. WebSearch
@@ -73,13 +76,18 @@ def _sha(*parts) -> str:
 
 
 # ---------------------------------------------------------------- providers
+API_KEYS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY")
+CLI_ENV = {}  # set by Agents: on the subscription plan the CLIs get no API keys, so they use the logged-in plan
+
+
 def _run(cmd, timeout, cwd=None, stdin=None):
     """run a CLI in its own process group; on timeout the whole group is killed (CLIs start helper processes)."""
     import signal
 
+    env = {k: v for k, v in os.environ.items() if not (CLI_ENV.get("drop_keys") and k in API_KEYS)}
     try:
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE if stdin else
-                             subprocess.DEVNULL, text=True, cwd=cwd, start_new_session=True)  # fmt: skip
+                             subprocess.DEVNULL, text=True, cwd=cwd, start_new_session=True, env=env)  # fmt: skip
     except FileNotFoundError as e:
         raise ProviderError(f"{cmd[0]} not installed") from e
     try:
@@ -148,7 +156,10 @@ def _openai(model, system, prompt, images, tools, timeout, cwd=None):
         model=model or "gpt-5", instructions=system or None, input=[{"role": "user", "content": content}], **kw
     )
     u = r.usage
-    return Reply(r.output_text, "openai", model, meta=dict(tokens=u.total_tokens if u else None))
+    tok = dict(
+        tokens=u.total_tokens, tokens_in=getattr(u, "input_tokens", None), tokens_out=getattr(u, "output_tokens", None)
+    )
+    return Reply(r.output_text, "openai", model or "gpt-5", meta=tok if u else {})
 
 
 def _anthropic(model, system, prompt, images, tools, timeout, cwd=None):
@@ -165,13 +176,15 @@ def _anthropic(model, system, prompt, images, tools, timeout, cwd=None):
         }  # fmt: skip
         for i in images
     ] + [{"type": "text", "text": prompt}]
-    kw = dict(tools=[{"type": "web_search_20250305", "name": "web_search"}]) if "WebSearch" in tools else {}
+    kw = dict(tools=[{"type": "web_search_20260209", "name": "web_search"}]) if "WebSearch" in tools else {}
     r = anthropic.Anthropic(timeout=timeout).messages.create(
         model=model or "claude-sonnet-5-5", max_tokens=8000, system=system or anthropic.NOT_GIVEN,
         messages=[{"role": "user", "content": content}], **kw,
     )  # fmt: skip
     text = "".join(b.text for b in r.content if getattr(b, "type", "") == "text")
-    return Reply(text, "anthropic", model, meta=dict(tokens=r.usage.input_tokens + r.usage.output_tokens))
+    u = r.usage
+    tok = dict(tokens=u.input_tokens + u.output_tokens, tokens_in=u.input_tokens, tokens_out=u.output_tokens)
+    return Reply(text, "anthropic", model or "claude-sonnet-5-5", meta=tok)
 
 
 BIN = {}  # executables of the CLI providers (config agents.bin: {claude: /path/to/claude, codex: ...})
@@ -186,9 +199,16 @@ class Agents:
 
     def __init__(self, cfg: dict, root: str):
         self.cfg, self.root = cfg or {}, root
-        self.roles = self.cfg.get("roles", {})
+        self.plan = os.environ.get("HDLABEL_AGENT_PLAN") or self.cfg.get("plan") or "subscription"
+        plans = self.cfg.get("plans") or {}
+        if plans and self.plan not in plans:
+            raise ValueError(f"agents.plan {self.plan!r} is not one of {sorted(plans)}")
+        base, over = plans.get(self.plan) or {}, self.cfg.get("roles") or {}
+        self.roles = {r: {**(base.get(r) or {}), **(over.get(r) or {})} for r in {*base, *over}}
+        CLI_ENV["drop_keys"] = self.plan == "subscription"
         self.budget = float(self.cfg.get("budget_usd") or 0)  # 0 = no limit
-        self.price = self.cfg.get("price_per_mtok") or {}  # {provider: usd per 1M tokens} for token-only providers
+        # {provider: usd per 1M tokens, or {model: [usd per 1M input, per 1M output]}} for providers that report tokens
+        self.price = self.cfg.get("price_per_mtok") or {}
         self.lock = threading.Lock()
         self.spent = 0.0
         BIN.update({k: os.path.expanduser(v) for k, v in (self.cfg.get("bin") or {}).items()})
@@ -240,8 +260,8 @@ class Agents:
             except Exception as e:  # SDK errors (auth, rate limit, network, missing package): one kind for the callers
                 raise ProviderError(f"{prov}: {type(e).__name__}: {str(e)[:300]}") from e
             rep.seconds = round(time.time() - t, 1)
-            if not rep.cost_usd and rep.meta.get("tokens") and prov in self.price:
-                rep.cost_usd = rep.meta["tokens"] / 1e6 * float(self.price[prov])
+            if not rep.cost_usd and rep.meta.get("tokens"):
+                rep.cost_usd = self.cost(prov, rep)
         with self.lock:
             self.spent += rep.cost_usd
         if cache:
@@ -249,6 +269,18 @@ class Agents:
             json.dump(asdict(rep), open(cf, "w"))
         self._log(role, rep, key)
         return rep
+
+    def cost(self, prov, rep: Reply) -> float:
+        """estimated USD of a call from its tokens (agents.price_per_mtok); 0 when no price is configured."""
+        p = self.price.get(prov)
+        if isinstance(p, dict):
+            p = p.get(rep.model)
+            if isinstance(p, (list, tuple)) and rep.meta.get("tokens_in") is not None:
+                return (rep.meta["tokens_in"] * float(p[0]) + rep.meta["tokens_out"] * float(p[1])) / 1e6
+            p = (
+                p[1] if isinstance(p, (list, tuple)) else p
+            )  # only a total is known: the output price is the upper bound
+        return rep.meta["tokens"] / 1e6 * float(p) if p else 0.0
 
     def _log(self, role, rep: Reply, key):
         with self.lock, open(f"{self.root}/ledger.jsonl", "a") as f:

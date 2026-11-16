@@ -6,19 +6,26 @@ them as new tool variants and adopt them only when a protected benchmark shows t
 final result (`debug/audit.html`) and owns the benchmark.
 
 ## Roles and models (`agents` in `configs/default.yaml`)
-| role | does | default |
-|---|---|---|
-| verifier | judges each evidence item (`prompts/verifier.md`): ok / drop / off / unsure | claude_cli sonnet |
-| confirmer | must also call an item wrong before it is deleted (another vendor) | codex_cli |
-| adjudicator | extra judge when the benchmark reference is built | claude_cli sonnet |
-| researcher | finds papers / OSS / models for a problem (web search; `prompts/researcher.md`) | claude_cli opus |
-| engineer | implements a candidate as a tool variant in a git worktree (`prompts/engineer.md`) | claude_cli opus |
-| default | anything else | claude_cli sonnet |
+Two ready role sets, picked by `agents.plan` (or `HDLABEL_AGENT_PLAN=api ./autolabel ...`):
+- `subscription` (default): the Claude Code (`claude`) and Codex (`codex`) CLIs logged in with a plan. No per-call
+  price; API keys in the environment are not passed to them, so they cannot bill an API account by accident.
+- `api`: `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` (`pip install -e .[agents]`), paid per token and estimated from
+  `agents.price_per_mtok`. The engineer edits files, so it stays Claude Code, which then bills the API key.
 
-A role is `{provider, model, timeout}`. Providers: `claude_cli`, `codex_cli`, `openai`, `anthropic`, `replay` (tests);
-CLI paths in `agents.bin`; the API providers need `pip install -e .[agents]` and OPENAI_API_KEY / ANTHROPIC_API_KEY. Calls are cached (a re-run costs nothing and repeats the answers), logged with their cost
-in `output/<name>/agent/ledger.jsonl`, and stop at `agents.budget_usd`. Change a model by editing one line, then
-measure it: `./autolabel bench verifier <config> --role verifier` (accuracy on the locked reference).
+| role | does | subscription | api |
+|---|---|---|---|
+| verifier | judges each evidence item (`prompts/verifier.md`): ok / drop / off / unsure | claude_cli sonnet | anthropic sonnet |
+| confirmer | must also call an item wrong before it is deleted (another vendor) | codex_cli | openai |
+| adjudicator | extra judge when the benchmark reference is built | claude_cli sonnet | anthropic sonnet |
+| researcher | finds papers / OSS / models for a problem (web search; `prompts/researcher.md`) | claude_cli opus | anthropic opus |
+| engineer | implements a candidate as a tool variant in a git worktree (`prompts/engineer.md`) | claude_cli opus | claude_cli opus |
+| default | anything else | claude_cli sonnet | anthropic sonnet |
+
+A role is `{provider, model, timeout}`; `agents.roles` overrides single roles on top of the plan. Providers:
+`claude_cli`, `codex_cli`, `openai`, `anthropic`, `replay` (tests); CLI paths in `agents.bin`. Calls are cached (a re-run
+costs nothing and repeats the answers), logged with their cost in `output/<name>/agent/ledger.jsonl`, and stop at
+`agents.budget_usd`. Change a model by editing one line, then measure it: `./autolabel bench verifier <config> --role
+verifier` (accuracy on the locked reference).
 
 ## Data loop (inside `./autolabel run`)
 label -> export -> debug (evidence packs: `hdlabel/evidence.py`) -> **verify** -> deletions applied (label / export /
@@ -40,7 +47,7 @@ everything flagged on `debug/audit.html` (docs/ANNOTATION.md).
 ./autolabel bench verifier <config> [--role R]      # accuracy of the production verifier / one role
 ```
 Every evaluation checks the lock. A changed reference, criteria (`hdlabel/agents/criteria.yaml`) or evaluator stops
-it; only a person rebuilds / re-locks. Scenes are split dev / holdout; the gate needs no regression on both.
+it; only a person rebuilds / re-locks (`--by person:NAME` records who approved the reference). Scenes are split dev / holdout; the gate needs no regression on both.
 Metrics are computed on RAW tool output (no review fixes): recall of reference-ok elements, share of reference-wrong
 elements still produced (fp), LiDAR step share of all curbs (needs no reference), lengths.
 

@@ -875,7 +875,7 @@ def lineage(area) -> dict:
     git = lambda *c: subprocess.run(["git", *c], cwd=ROOT, capture_output=True, text=True).stdout.strip()  # noqa: E731
     lk = f"{ROOT}/bench/{area.name}/LOCK.json"
     return dict(commit=git("rev-parse", "--short", "HEAD"), dirty=bool(git("status", "--porcelain", "--untracked-files=no")),
-                tools=registry.versions(), agents=area.cfg.get("agents", {}).get("roles"),
+                tools=registry.versions(), agent_plan=area.agents.plan, agents=area.agents.roles,
                 prompts=dict(verifier=prompt_version()),
                 bench=json.load(open(lk))["data"][:12] if os.path.exists(lk) else None)  # fmt: skip
 

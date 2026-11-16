@@ -84,15 +84,28 @@ device: auto                  # torch device of the GPU steps: auto (cuda if ava
 # ---- agents (hdlabel/agents): which model plays which role. Providers: claude_cli, codex_cli, openai, anthropic,
 #      replay (hdlabel/agents/llm.py). Pick models by measurement: ./autolabel bench status | bench verifier --role R.
 agents:
-  roles:
-    default:    {provider: claude_cli, model: claude-sonnet-5-5}
-    verifier:   {provider: claude_cli, model: claude-sonnet-5-5, timeout: 300}  # chosen on the benchmark (bench status)
-    confirmer:  {provider: codex_cli, model: null, timeout: 300}  # other vendor; must agree before a deletion
-    adjudicator: {provider: claude_cli, model: claude-sonnet-5-5}  # judge of the benchmark reference
-    researcher: {provider: claude_cli, model: claude-opus-5-5, timeout: 1800}
-    engineer:   {provider: claude_cli, model: claude-opus-5-5, timeout: 3600}
+  plan: subscription          # subscription | api (or env HDLABEL_AGENT_PLAN); roles below override single roles
+  plans:
+    subscription:             # Claude Code (`claude`) and Codex CLI (`codex`) logged in with a plan; API keys are not passed to them
+      default:    {provider: claude_cli, model: claude-sonnet-5-5}
+      verifier:   {provider: claude_cli, model: claude-sonnet-5-5, timeout: 300}  # chosen on the benchmark (bench status)
+      confirmer:  {provider: codex_cli, model: null, timeout: 300}  # other vendor; must agree before a deletion
+      adjudicator: {provider: claude_cli, model: claude-sonnet-5-5}  # judge of the benchmark reference
+      researcher: {provider: claude_cli, model: claude-opus-5-5, timeout: 1800}
+      engineer:   {provider: claude_cli, model: claude-opus-5-5, timeout: 3600}
+    api:                      # ANTHROPIC_API_KEY / OPENAI_API_KEY, paid per token (pip install -e .[agents])
+      default:    {provider: anthropic, model: claude-sonnet-5-5}
+      verifier:   {provider: anthropic, model: claude-sonnet-5-5, timeout: 300}
+      confirmer:  {provider: openai, model: gpt-5, timeout: 300}
+      adjudicator: {provider: anthropic, model: claude-sonnet-5-5}
+      researcher: {provider: anthropic, model: claude-opus-5-5, timeout: 1800}
+      engineer:   {provider: claude_cli, model: claude-opus-5-5, timeout: 3600}  # edits files: Claude Code, billed to the API key
+  roles: {}                   # e.g. {verifier: {provider: anthropic, model: claude-opus-5-5}}
   budget_usd: 30              # per run; calls stop (verifier -> uncertain) when spent
-  price_per_mtok: {codex_cli: 2.0}  # cost estimate for providers that report tokens only
+  price_per_mtok:             # cost estimate for providers that report tokens only; check the current prices
+    codex_cli: 2.0
+    anthropic: {claude-sonnet-5-5: [2.0, 10.0], claude-opus-5-5: [4.0, 20.0]}   # USD per 1M input, output tokens
+    openai: {gpt-5: [1.25, 10.0]}
 verification: {enabled: true, role: verifier, confirm_role: confirmer, max_rounds: 3, max_unsure: 5, reject_spot_wrong: 5, min_curb_step: 0.35, jobs: 4}
 evolve: {min_cases: 5, max_attempts: 2,   # ./autolabel evolve: problems with >= min_cases issues; give up after N failed attempts
          targets: {"curb:false_positive": curb.fp, "curb:offset": curb.lidar, "marking:false_positive": marking.fp,

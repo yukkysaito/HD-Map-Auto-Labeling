@@ -55,7 +55,8 @@ HDLABEL_DEVICE=cpu ./autolabel run /tmp/hdlabel_demo/config.yaml
 - **Large runs**: `--no-debug` (or `debug: false`) disables debug output, `prune_frames: true` saves disk space,
   `jobs` sets the parallelism (progress and an estimate of the remaining time are printed per stage).
 - **Verification and acceptance**: `run` verifies every scene with the verifier agent (`agents` / `verification` in the
-  config; without a model the scenes stay `uncertain`) and the training data lists only accepted scenes. A person
+  config; without a model the scenes stay `uncertain`). The agents run on a Claude / ChatGPT subscription through the
+  `claude` and `codex` CLIs by default, or on API keys with `agents.plan: api` (docs/AGENTS.md). The training data lists only accepted scenes. A person
   accepts on `debug/audit.html` and `./autolabel signoff` (docs/ANNOTATION.md); `validate` checks a dataset on the
   training side (files, images, poses, references, labels vs. vectors).
 

@@ -163,7 +163,8 @@ def test_api_providers_request_and_parse(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "x")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
     roles = dict(verifier=dict(provider="openai", model="gpt-x"), confirmer=dict(provider="anthropic", model="c-x"))
-    ag = Agents(dict(roles=roles, price_per_mtok=dict(openai=10.0)), str(tmp_path / "agent"))
+    price = dict(openai=10.0, anthropic={"c-x": [1.0, 5.0]})
+    ag = Agents(dict(roles=roles, price_per_mtok=price), str(tmp_path / "agent"))
     rows = [dict(key="0", image=str(img), kind="curb", reason="spot", confidence=0.5, size_m=2.0)]
     for role, prov in (("verifier", "openai"), ("confirmer", "anthropic")):
         assert ag.available(role)
@@ -180,6 +181,30 @@ def test_api_providers_request_and_parse(tmp_path, monkeypatch):
     assert sent["openai"]["tools"] == [{"type": "web_search"}]
     led = [json.loads(x) for x in open(tmp_path / "agent" / "ledger.jsonl")]
     assert led[0]["cost_usd"] == pytest.approx(1234 / 1e6 * 10.0)  # token providers priced by price_per_mtok
+    assert led[1]["cost_usd"] == pytest.approx((1000 * 1.0 + 200 * 5.0) / 1e6)  # per model: input, output price
     # an SDK error (e.g. an expired key) becomes ProviderError and the verifier answers unsure, not a crash
     monkeypatch.setattr(OpenAI, "create", lambda self, **kw: (_ for _ in ()).throw(RuntimeError("401 expired key")))
     assert judge_items(ag, [dict(rows[0], kind="lane_line")], "verifier")["0"]["decision"] == "unsure"
+
+
+def test_plans_subscription_and_api(tmp_path, monkeypatch):
+    """agents.plan picks a role set from the default config; subscription CLIs get no API keys."""
+    from hdlabel.agents import llm
+    from hdlabel.run import load_config
+
+    cfg = load_config(None)["agents"]
+    monkeypatch.delenv("HDLABEL_AGENT_PLAN", raising=False)
+    sub = Agents(cfg, str(tmp_path / "s"))
+    assert sub.plan == "subscription" and sub.model_of("verifier")["provider"] == "claude_cli"
+    assert sub.model_of("confirmer")["provider"] == "codex_cli"
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "secret")
+    out = llm._run(["sh", "-c", "echo ${ANTHROPIC_API_KEY:-none}"], 10)
+    assert out.strip() == "none"  # the CLI uses the logged-in plan, not the key
+    monkeypatch.setenv("HDLABEL_AGENT_PLAN", "api")
+    api = Agents(dict(cfg, roles={"verifier": {"model": "claude-opus-5-5"}}), str(tmp_path / "a"))
+    assert api.model_of("verifier") == dict(provider="anthropic", model="claude-opus-5-5", timeout=300)  # override
+    assert api.model_of("confirmer")["provider"] == "openai" and api.model_of("researcher")["provider"] == "anthropic"
+    assert llm._run(["sh", "-c", "echo ${ANTHROPIC_API_KEY:-none}"], 10).strip() == "secret"
+    monkeypatch.setenv("HDLABEL_AGENT_PLAN", "nope")
+    with pytest.raises(ValueError):
+        Agents(cfg, str(tmp_path / "n"))
