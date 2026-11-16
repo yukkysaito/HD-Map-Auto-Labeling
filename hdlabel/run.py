@@ -965,9 +965,8 @@ def system_summary(area) -> dict:
 
     out = {}
     v = area.cfg.get("verification", {})
-    out["verifier"] = " + confirmation by ".join(
-        str(area.agents.model_of(r)) for r in (v.get("role", "verifier"), v.get("confirm_role")) if r
-    )
+    ms = [area.agents.model_of(r) for r in (v.get("role", "verifier"), v.get("confirm_role")) if r]
+    out["verifier"] = " + deletions confirmed by ".join(f"{m['provider']}/{m['model'] or 'default model'}" for m in ms)
     lk = f"{ROOT}/bench/{area.name}/LOCK.json"
     if os.path.exists(lk):
         L = json.load(open(lk))
@@ -979,8 +978,12 @@ def system_summary(area) -> dict:
             f"wrong elements found {a['wrong_recall']}"
         )
     for name, t in registry.load()["tools"].items():
-        for h in t.get("history", []):
-            out[f"tool {name} {h['date']}"] = f"{h['previous']} -> {h['active']} by {h['by']} ({h.get('note', '')})"
+        for i, h in enumerate(t.get("history", [])):
+            ev = h.get("evidence") or {}
+            gain = f", {ev['target']} better by {ev['gain']}" if ev.get("gain") is not None else ""
+            out[f"tool {name} change {i + 1} ({h['date']})"] = (
+                f"{h['previous']} -> {h['active']} by {h['by']}{gain} ({h.get('note', '')})"
+            )
     return out
 
 
