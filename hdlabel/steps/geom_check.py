@@ -162,7 +162,8 @@ def main(argv=None):
     k = np.isfinite(z)
     c_ = cls[ii, jj][k]
     write_pcd(f"{a.out}/labels.pcd", np.c_[xy[k] + origin[:2], z[k] + origin[2]], dict(rgb=PALETTE[c_], label=c_))
-    KIND = ["lane_line", "curb", "road_boundary", "crosswalk", "marking_area", "arrow", "drivable_area", "stop_line"]
+    KIND = ["lane_line", "curb", "road_boundary", "crosswalk", "marking_area", "arrow", "drivable_area", "stop_line",
+            "curb_candidate"]  # fmt: skip
     pts, col, kind = [], [], []
     for f in feats:
         pr, g = f["properties"], f["geometry"]

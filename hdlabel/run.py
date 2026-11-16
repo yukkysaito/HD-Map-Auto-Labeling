@@ -507,6 +507,16 @@ def marking_args(area) -> list:
             "--frag-views", fr["short_min_views"]]  # fmt: skip
 
 
+def curb_args(area, gts) -> list:
+    """vectorize.py curb filter options from the config `markings.curb_filter` (none when it is off: unchanged)."""
+    cf = area.cfg["markings"].get("curb_filter") or {}
+    if not cf.get("enabled"):
+        return []
+    return ["--curb-filter", "--gt", *gts, "--curb-adjacent", cf["adjacent_m"], "--curb-min-adjacent",
+            cf["min_adjacent"], "--curb-min-first", cf["min_first_edge"], "--curb-wavy", cf["max_wavy_deg_per_m"]] \
+        + (["--curb-rules", *cf["rules"]] if cf.get("rules") else [])  # fmt: skip
+
+
 def label(area, s, force):
     sid = s["id"]
     owner = area.owners.get(sid, sid)
@@ -584,7 +594,16 @@ def label(area, s, force):
         area,
         f"vectors_{sid}",
         f"{STEPS}/vectorize.py",
-        [f"{S}/labels", "--out", f"{S}/vectors", "--fixes", *area.reviews(), *marking_args(area), *dbg()],
+        [
+            f"{S}/labels",
+            "--out",
+            f"{S}/vectors",
+            "--fixes",
+            *area.reviews(),
+            *marking_args(area),
+            *curb_args(area, gts),
+            *dbg(),
+        ],
         [f"{S}/vectors/vectors.geojson"],
         [f"{S}/labels/ground_map.npz", f"{S}/labels/arrows.json", *area.reviews()],
         force=force,
@@ -754,7 +773,13 @@ def qa(area, s, force):
             area,
             f"qa_vectors_{s['id']}_{d}",
             f"{STEPS}/vectorize.py",
-            [f"{Q}/labels_{d}", "--out", f"{Q}/vectors_{d}", *marking_args(area)],
+            [
+                f"{Q}/labels_{d}",
+                "--out",
+                f"{Q}/vectors_{d}",
+                *marking_args(area),
+                *curb_args(area, [f"{area.data(d)}/gt.npy"]),
+            ],
             [f"{Q}/vectors_{d}/vectors.geojson"],
             [f"{Q}/labels_{d}/ground_map.npz"],
             force=force,

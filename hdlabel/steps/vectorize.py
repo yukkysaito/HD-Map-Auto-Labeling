@@ -14,6 +14,10 @@ Elements (3D, map frame; z from the map surface):
                               into lane lines / areas, nor are dashes on its axis behind the tail (dashed arrow tails)
   crosswalk       Polygon     crosswalk stripes merged into one area
   curb            LineString  curb skeleton paths joined across small gaps (occlusions)
+  curb_candidate  LineString  with --curb-filter (and --gt trajectories): a curb line that is not a road kerb by
+                              hdlabel/curbcheck.py (not on the edge of the road reachable from the trajectories, not
+                              the first edge sideways from them, small loop, wavy, short at the edge of the view);
+                              props.curb_check = the failed rules. Not a curb for training / the benchmark
   drivable_area   Polygon     road + marking + crosswalk + manhole (holes = islands), observed cells only
   road_boundary   LineString  outline of the drivable area, split into runs; props.observed = the outside is an observed
                               non-drivable class (curb, sidewalk, off-road) -> a real boundary; false -> edge of the observed
@@ -81,6 +85,25 @@ def main(argv=None):
         help="stop line: max |cos| to the lane direction (long lane lines within 15 m)",
     )
     p.add_argument("--min-drivable", type=float, default=20.0, help="min drivable component area (m2)")
+    p.add_argument(
+        "--curb-filter",
+        action="store_true",
+        help="curb lines that are not road kerbs (hdlabel/curbcheck.py: not next to the road reachable from the "
+        "trajectories, not the first edge sideways from them, loops, wavy, short at the edge of the view) become "
+        "kind curb_candidate with props.curb_check = the failed rules",
+    )
+    p.add_argument("--gt", nargs="*", default=[], help="gt.npy trajectories of the scene's drives (--curb-filter)")
+    p.add_argument(
+        "--curb-adjacent", type=float, default=2.0, help="--curb-filter: max distance to the road over curb cells (m)"
+    )
+    p.add_argument(
+        "--curb-min-adjacent", type=float, default=0.3, help="--curb-filter: min share of a curb next to the road"
+    )
+    p.add_argument(
+        "--curb-min-first", type=float, default=0.15, help="--curb-filter: min share of a curb hit first by side rays"
+    )
+    p.add_argument("--curb-wavy", type=float, default=30.0, help="--curb-filter: max mean turning (deg / m)")
+    p.add_argument("--curb-rules", nargs="*", help="--curb-filter: apply only these rules (default: all)")
     p.add_argument(
         "--fixes",
         nargs="*",
@@ -597,6 +620,42 @@ def main(argv=None):
     feats = [f for f in feats if not fragment(f["properties"])]
     dropped_fragments = n0 - len(feats)
 
+    # ---- curb filter (--curb-filter, hdlabel/curbcheck.py): curbs that are not road kerbs -> curb_candidate
+    curb_filter = None
+    if a.curb_filter:
+        from hdlabel.curbcheck import check_curbs
+
+        trajs = []
+        for g in a.gt:
+            P = np.load(g)[:, 1:4] - origin
+            z = map_coordinates(H, ((P[:, :2] - lo) / sres).T - 0.5, order=0, mode="constant", cval=np.nan)
+            on = np.abs(P[:, 2] - z) < 1.5  # this road level (not a bridge above / road below); off the grid: nan
+            for run in np.split(np.arange(len(P)), np.flatnonzero(np.diff(on.astype(int)) != 0) + 1):
+                if on[run[0]] and len(run) >= 2:
+                    q = P[run, :2]
+                    cut = np.flatnonzero(np.linalg.norm(np.diff(q, axis=0), axis=1) > 2.0) + 1
+                    trajs += [t for t in np.split(q, cut) if len(t) >= 2]
+        k = max(1, int(round(sres / res)))
+        surf = np.repeat(np.repeat(m["height_w"] > 0, k, 0), k, 1)[: cls.shape[0], : cls.shape[1]]
+        surf = np.pad(surf, [(0, cls.shape[0] - surf.shape[0]), (0, cls.shape[1] - surf.shape[1])])
+        surf = cv2.dilate(surf.astype(np.uint8), np.ones((21, 21), np.uint8)) > 0  # 1 m: sparse LiDAR at the edges
+        idx = [
+            i for i, f in enumerate(feats) if f["properties"]["kind"] == "curb" and not f["properties"].get("reviewed")
+        ]
+        lines = [np.asarray(feats[i]["geometry"]["coordinates"], float)[:, :2] - origin[:2] for i in idx]
+        params = dict(adj_m=a.curb_adjacent, min_adjacent=a.curb_min_adjacent, min_first=a.curb_min_first,
+                      wavy_deg_per_m=a.curb_wavy)  # fmt: skip
+        why, st = check_curbs(lines, cls, C, lo, res, trajs, surf, params)
+        rules = {}
+        if a.curb_rules:  # only these rules flag a curb (the others are measured but not applied)
+            why = [[r for r in w if r in a.curb_rules] for w in why]
+        for i, w in zip(idx, why):
+            if w:
+                feats[i]["properties"].update(kind="curb_candidate", curb_check=w)
+                for r in w:
+                    rules[r] = rules.get(r, 0) + 1
+        curb_filter = dict(st, curbs=len(idx), candidates=sum(bool(w) for w in why), rules=rules)
+
     # ---- outputs
     crs = dict(type="name", properties=dict(name="map frame of the label map (Autoware map, metres)"))
     json.dump(dict(type="FeatureCollection", crs=crs, features=feats), open(f"{a.out}/vectors.geojson", "w"))
@@ -611,18 +670,19 @@ def main(argv=None):
         s = summ.setdefault(k, dict(n=0, length_m=0.0))
         s["n"] += 1
         s["length_m"] = round(s["length_m"] + pr.get("length", 0.0), 1)
-    json.dump(
-        dict(
-            source=os.path.abspath(a.labels),
-            params=vars(a),
-            fixes_in_grid=len(fixes),
-            fixes_applied=applied,
-            dropped_fragments=dropped_fragments,
-            elements=summ,
-        ),
-        open(f"{a.out}/vectors.json", "w"),
-        indent=1,
+    filter_keys = ("curb_filter", "gt", "curb_adjacent", "curb_min_adjacent", "curb_min_first", "curb_wavy")
+    params = {k: v for k, v in vars(a).items() if a.curb_filter or k not in filter_keys}  # default: as before
+    info = dict(
+        source=os.path.abspath(a.labels),
+        params=params,
+        fixes_in_grid=len(fixes),
+        fixes_applied=applied,
+        dropped_fragments=dropped_fragments,
+        elements=summ,
     )
+    if curb_filter is not None:
+        info["curb_filter"] = curb_filter
+    json.dump(info, open(f"{a.out}/vectors.json", "w"), indent=1)
     print(json.dumps(summ, indent=1))
     print("elements: " + ", ".join(f"{k} {v['n'] if isinstance(v, dict) and 'n' in v else v}" for k, v in summ.items()))
 
@@ -643,6 +703,7 @@ def main(argv=None):
             "lane_line/dashed": (0, 255, 255),
             "lane_line/short": (0, 160, 255),
             "curb": (255, 80, 0),
+            "curb_candidate": (160, 0, 255),
             "road_boundary/observed": (0, 0, 255),
             "road_boundary/unknown": (120, 120, 120),
             "arrow": (0, 255, 0),

@@ -48,6 +48,14 @@ markings:
   fragments: {min_confidence: 0.5, short_length: 2.2, short_min_views: 20}  # lane-line pieces dropped as noise: below
                               # min_confidence, or shorter than short_length (m) and seen by fewer than short_min_views
                               # camera views (set min_confidence 0, short_length 0 to keep all; docs/MAINTENANCE.md)
+  curb_filter: {enabled: false, adjacent_m: 2.0, min_adjacent: 0.3, min_first_edge: 0.15, max_wavy_deg_per_m: 30.0,
+                rules: null}  # null: every rule; or a list of not_road_adjacent, not_first_edge, loop, wavy, edge_of_view
+                              # vectorize variant curb_adjacency (hdlabel/curbcheck.py): curb lines that are not road kerbs
+                              # become kind curb_candidate (props.curb_check = rules), not curb: less than min_adjacent of
+                              # the line within adjacent_m of the road flood-filled from the drives' trajectories through
+                              # curb / unobserved cells only (planters behind a sidewalk / hedge, wall bases, sidewalk
+                              # pieces), not hit by sideways rays from the trajectories (< min_first_edge), small loops,
+                              # wavy lines (mean turning > max_wavy_deg_per_m), short pieces at the edge of the view
 
 # ---- processing
 segmentation:

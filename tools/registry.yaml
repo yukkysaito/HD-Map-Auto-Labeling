@@ -110,7 +110,14 @@ tools:
     cost: ~20 s per scene (CPU)
     license: Apache-2.0
     deps: [scikit-image, shapely]
-    variants: {default: {}}
+    variants:
+      default: {}
+      # curbs that are not road kerbs (not on the edge of the road flood-filled from the trajectories, not the first
+      # edge sideways from them, small loops, wavy, short at the edge of the view) -> kind curb_candidate
+      curb_adjacency: {markings: {curb_filter: {enabled: true}}}
+      # only the shape rules: on the benchmark's dev split the adjacency and edge-of-view rules removed more correct
+      # kerbs than wrong ones (curb_adjacency was rejected by the gate), loops / wavy lines removed only wrong ones
+      curb_shape: {markings: {curb_filter: {enabled: true, rules: [loop, wavy]}}}
     active: default
     history: []
 
