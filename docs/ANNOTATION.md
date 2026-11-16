@@ -71,7 +71,7 @@ hand, e.g. to set the kind / type of an element, which the agent review does not
   "fixes": [
     {"kind": "marking_area", "at": [1023.4, 2567.8], "set": {"type": "zebra"}},
     {"kind": "lane_line",    "at": [1050.1, 2580.2], "drop": true, "why": "shadow"},
-    {"kind": "lane_line",    "at": [1060.0, 2590.0], "set": {"style": "dashed"}}
+    {"kind": "lane_line",    "at": [1060.0, 2590.0], "drop": true}
   ]
 }
 ```

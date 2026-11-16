@@ -46,7 +46,8 @@ run).
 - Use both views. The map is sharp in the middle of the road and blurred at its edges; the camera is sharp up
   close. The camera frame may show a car or pole in front of the item: then judge from the map.
 - Labels near the edge of the observed area (black in the map) are often fragments; decide on what is visible.
-- A short piece of a real line (e.g. a dashed line segment) is `ok`.
+- A short piece of a real line (e.g. one dash of a dashed line) is `ok`. Each dash is its own element; an outline that
+  runs across the unpainted gap between dashes is `off`.
 - Road markings are paint on the carriageway (including bicycle lanes on it). Paint on a sidewalk or a plaza for
   pedestrians is `drop`.
 - A squiggle on plain or worn asphalt that follows no clear paint edge is `drop`, even where faded paint is nearby:

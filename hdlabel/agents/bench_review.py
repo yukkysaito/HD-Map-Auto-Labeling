@@ -68,12 +68,10 @@ separate element, <i>road_boundary</i>, not checked here), a painted line, the b
 the edge of a lawn or planter away from the road, a shadow. Or the kerb is there but the line is clearly beside it
 (more than about 0.5 m).</td></tr>
 <tr><td><b>marking</b> (yellow)</td><td>the outline lies on <b>paint on the road surface</b> (any paint) and follows it
-within about 0.3 m. A short piece of a real line (one dash) is correct. A <b>dashed line is one line through its
-dashes</b>: the outline crossing the unpainted gaps between dashes of the same line is correct (the gaps are kept as the
-<i>segments</i> attribute).</td><td>no paint: shadow, asphalt patch or seam,
+within about 0.3 m. A short piece of a real line (one dash) is correct. Each dash of a dashed line is its own element: an outline that runs across the
+unpainted gap between dashes is wrong.</td><td>no paint: shadow, asphalt patch or seam,
 tyre marks, wet patch, manhole, paint on a kerb face / wall / pole, paint on a sidewalk or plaza. Or the paint is there but
-the outline is clearly beside it or covers a clearly wrong extent, e.g. it jumps from one lane line to a neighbouring one
-or joins a dash to paint that is not part of the same line.</td></tr>
+the outline is clearly beside it or covers a clearly wrong extent.</td></tr>
 </table>
 <p><b>cannot tell</b>: the images do not show it (blurred, hidden in both views, outside the observed area). If one view
 is blocked by a car or pole, judge from the others.</p></details>

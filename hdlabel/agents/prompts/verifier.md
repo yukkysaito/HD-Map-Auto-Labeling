@@ -20,7 +20,7 @@ Decide every item:
 - `off`: the paint / kerb is there but the outline is clearly beside it (more than ~0.5 m) or covers a clearly wrong
   extent.
 - `unsure`: the evidence does not show it (blurred, occluded in both views, outside the observed area).
-A short piece of a real line (e.g. one dash) is `ok`. A dashed lane line is one line through its dashes: an outline
-that crosses the unpainted gaps between dashes of the same line is `ok`; one that jumps to a neighbouring line is `off`. If a view is blocked by a car or pole, judge from the other panels.
+A short piece of a real line (e.g. one dash) is `ok`. Each dash of a dashed line is its own element: an outline that
+runs across the unpainted gap between dashes is `off`. If a view is blocked by a car or pole, judge from the other panels.
 
 Give a confidence 0..1 for each decision and a short reason naming what you see.

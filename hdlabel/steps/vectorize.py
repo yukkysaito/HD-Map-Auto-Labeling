@@ -1,10 +1,10 @@
 """Vector map elements of a scene from its ground label map (project_labels.py ground_map.npz), without any HD map.
 
 Elements (3D, map frame; z from the map surface):
-  lane_line       LineString  thin road markings: skeleton paths, dashes of one line joined across their gaps
-                              (collinear, gap <= --max-gap m over road, not across crosswalks / off-road).
-                              props: style solid | dashed | short, painted (share of the length that is paint),
-                              width (m), segments (painted intervals as [s0, s1] along the line, m)
+  lane_line       LineString  thin road markings as painted: one element per painted piece (each dash of a dashed line
+                              is its own element; gaps under --paint-gap m, e.g. worn paint, are bridged).
+                              props: style solid (>= 6 m) | short (by length only), width (m), length (m),
+                              painted (1.0) and segments ([[0, length]]) kept for the format
   stop_line       LineString  a thin line ACROSS the lanes (common.stop_lines: |cos| to the direction of the long lane lines
                               around < --stop-cos, paint wider than --stop-width, longer than --stop-length). props: length, width
   marking_area    Polygon     wide or compact markings (stop bars wider than --line-width, symbols, hatched zones)
@@ -57,7 +57,18 @@ def main(argv=None):
     )
     p.add_argument("--line-width", type=float, default=0.5, help="markings wider than this (m, median) are areas")
     p.add_argument("--min-line", type=float, default=0.8, help="min painted segment length (m)")
-    p.add_argument("--max-gap", type=float, default=13.0, help="max gap between dashes of one lane line (m)")
+    p.add_argument(
+        "--max-gap",
+        type=float,
+        default=13.0,
+        help="max gap between collinear dashes when lines are chained for the traffic direction (stop lines; m)",
+    )
+    p.add_argument(
+        "--paint-gap",
+        type=float,
+        default=0.5,
+        help="lane lines are output per painted piece; unpainted gaps shorter than this are bridged (m)",
+    )
     p.add_argument("--curb-gap", type=float, default=3.0)
     p.add_argument("--min-curb", type=float, default=1.0)
     p.add_argument("--simplify", type=float, default=0.05, help="Douglas-Peucker tolerance for lines (m)")
@@ -214,6 +225,22 @@ def main(argv=None):
 
     def plen(xy):
         return float(np.linalg.norm(np.diff(xy, axis=0), axis=1).sum()) if len(xy) > 1 else 0.0
+
+    def cut(xy, s0, s1):
+        """the part of the polyline between arc lengths s0 and s1."""
+        s = np.r_[0, np.cumsum(np.linalg.norm(np.diff(xy, axis=0), axis=1))]
+        t = np.r_[s0, s[(s > s0) & (s < s1)], s1]
+        return np.stack([np.interp(t, s, xy[:, j]) for j in (0, 1)], 1)
+
+    def painted_pieces(segs, gap):
+        """painted intervals with gaps < gap merged (segmentation noise, worn paint)."""
+        out = []
+        for u, v in segs:
+            if out and u - out[-1][1] < gap:
+                out[-1][1] = v
+            else:
+                out.append([u, v])
+        return out
 
     def smooth_line(xy, k=3):
         if len(xy) < 2 * k + 1:
@@ -433,17 +460,21 @@ def main(argv=None):
                 length=round(l["length"], 2),
                 width=round(l["width"], 2),
             )
-        else:
-            add(
-                "lane_line",
-                "LineString",
-                simplify(l["xy"], a.simplify),
-                style=l["style"],
-                painted=round(l["painted"], 3),
-                length=round(l["length"], 2),
-                width=None if l["width"] is None else round(l["width"], 2),
-                segments=l["segs"],
-            )
+        else:  # the chain only served the traffic direction; the output follows the paint, piece by piece
+            for s0, s1 in painted_pieces(l["segs"], a.paint_gap):
+                L = s1 - s0
+                if L < a.min_line:
+                    continue
+                add(
+                    "lane_line",
+                    "LineString",
+                    simplify(cut(l["xy"], s0, s1), a.simplify),
+                    style="solid" if L >= 6 else "short",
+                    painted=1.0,
+                    length=round(L, 2),
+                    width=None if l["width"] is None else round(l["width"], 2),
+                    segments=[[0.0, round(L, 2)]],
+                )
     for rings in polygons(area_mask, 0.05, 0.2):
         add("marking_area", "Polygon", rings)
 
