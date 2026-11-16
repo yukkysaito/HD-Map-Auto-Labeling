@@ -36,7 +36,7 @@ from mcap_ros2.decoder import DecoderFactory
 from scipy.spatial.transform import Rotation as R
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
-from hdlabel.common import bag_ranges, link_file, load_yaml, stamps_of, tf_to_base
+from hdlabel.common import bag_ranges, link_file, load_yaml, stamps_of, tf_to_base, write_atomic
 
 
 def main(argv=None):
@@ -109,11 +109,13 @@ def main(argv=None):
                 return
             im = cv2.resize(im, self.size0, interpolation=cv2.INTER_AREA)
             x, y, rw, rh = self.crop
-            cv2.imwrite(
-                path,
+            ok, buf = cv2.imencode(
+                ".jpg",
                 cv2.remap(im, self.m1, self.m2, cv2.INTER_LINEAR)[y : y + rh, x : x + rw],
                 [cv2.IMWRITE_JPEG_QUALITY, quality],
             )
+            if ok:
+                write_atomic(path, buf.tobytes())  # a frame that exists is complete (it is skipped on a rerun)
 
     # cheap check first (bag summaries only): logs recorded without cameras are useless for labelling
     have, errors, unindexed = set(), [], set()

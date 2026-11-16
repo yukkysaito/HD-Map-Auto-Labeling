@@ -16,7 +16,7 @@ import torch
 from PIL import Image
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
-from hdlabel.common import device
+from hdlabel.common import device, save_png
 
 # color_stub: RGB of the synthetic world -> Vistas class id (13 road, 24 lane marking, 23 crosswalk, 2 curb,
 # 15 sidewalk, 30 vegetation, 27 sky)
@@ -62,9 +62,7 @@ def main(argv=None):
     if a.model == "color_stub":
         for out, files in todo.items():
             for f in files:
-                Image.fromarray(color_stub(np.asarray(Image.open(f).convert("RGB")))).save(
-                    f"{out}/{os.path.basename(f)[:-4]}.png"
-                )
+                save_png(f"{out}/{os.path.basename(f)[:-4]}.png", color_stub(np.asarray(Image.open(f).convert("RGB"))))
         done()
         return
     warnings.filterwarnings("ignore")
@@ -83,7 +81,9 @@ def main(argv=None):
                 inp["pixel_values"] = inp["pixel_values"].to(dtype)
                 segs = proc.post_process_semantic_segmentation(model(**inp), target_sizes=[im.size[::-1] for im in ims])
             for f, s in zip(files[b : b + a.batch], segs):
-                Image.fromarray(s.cpu().numpy().astype(np.uint8)).save(f"{out}/{os.path.basename(f)[:-4]}.png")
+                save_png(
+                    f"{out}/{os.path.basename(f)[:-4]}.png", s.cpu().numpy().astype(np.uint8)
+                )  # complete or absent
         print(f"segmented {len(files)} images -> {out}", flush=True)
     done()
 

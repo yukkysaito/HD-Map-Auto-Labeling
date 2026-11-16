@@ -146,3 +146,18 @@ def test_link_file_falls_back_to_copy(tmp_path, monkeypatch):
     common.link_file(str(src), str(tmp_path / "kf" / "1.jpg"))
     dst = tmp_path / "kf" / "1.jpg"
     assert not dst.is_symlink() and dst.read_bytes() == b"abc"
+
+
+def test_write_atomic_leaves_no_partial_file(tmp_path, monkeypatch):
+    """an interrupted write leaves no file under the final name (a rerun would skip it as done)"""
+    import pytest
+
+    from hdlabel import common
+
+    def boom(*a):
+        raise OSError("disk gone")
+
+    monkeypatch.setattr(common.os, "replace", boom)
+    with pytest.raises(OSError):
+        common.write_atomic(str(tmp_path / "1.jpg"), b"abc")
+    assert not (tmp_path / "1.jpg").exists()

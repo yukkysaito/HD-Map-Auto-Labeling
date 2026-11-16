@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 
+import cv2
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 from scipy.spatial.transform import Slerp
@@ -49,6 +50,22 @@ PALETTE = np.array(
     ],
     np.uint8,
 )  # RGB per raster label id
+
+
+def write_atomic(path: str, data: bytes) -> None:
+    """write a file under a temporary name and rename it: an interrupted run (kill, power or disk loss) never leaves a
+    truncated file that a later run would take as done"""
+    tmp = f"{path}.part"
+    with open(tmp, "wb") as f:
+        f.write(data)
+    os.replace(tmp, path)
+
+
+def save_png(path: str, im: np.ndarray) -> None:
+    ok, buf = cv2.imencode(".png", im)
+    if not ok:
+        raise OSError(f"cannot encode {path}")
+    write_atomic(path, buf.tobytes())
 
 
 def link_file(src: str, dst: str) -> None:
