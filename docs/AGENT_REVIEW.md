@@ -1,5 +1,9 @@
 # Review by an AI agent
 
+`./autolabel run` does this automatically with the verifier agent (docs/AGENTS.md; its criteria are
+`hdlabel/agents/prompts/verifier.md`). This page describes the evidence pack and the decisions file, which an agent
+session or a person can also write by hand.
+
 The review of the extraction is done by an AI agent with image input (e.g. Claude Code); a person only accepts the
 result on the acceptance page (`debug/audit.html`). The agent judges **the extraction only**: is an outline on real
 paint / a real curb, and is it where the paint is. What kind of marking it is (arrow directions, crosswalk, zebra,

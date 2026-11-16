@@ -51,7 +51,7 @@ def overlay(reg: dict | None = None) -> dict:
         v = (t.get("variants") or {}).get(t.get("active", "default"))
         if v is None:
             raise ValueError(f"tool {name}: active variant {t.get('active')} is not defined")
-        out = _merge(out, v)
+        out = _merge(out, {k: x for k, x in v.items() if k != "when"})
     return out
 
 

@@ -68,7 +68,8 @@ def prepare(area, exp_id: str, overlay: dict, scenes: list[str], drive_writes=()
                 os.remove(st)
     cfg = merge(area.cfg, overlay)
     absp = lambda p: p and os.path.join(ROOT, os.path.expanduser(str(p)))  # noqa: E731
-    cfg.update(name=exp_id, output=f"{area.out}/experiments", review_dir=f"{E}/review", debug=False,
+    # debug on: the steps get the same arguments as in the main run (their stamps match, unchanged steps are skipped)
+    cfg.update(name=exp_id, output=f"{area.out}/experiments", review_dir=f"{E}/review", debug=True,
                pointcloud_map=absp(cfg.get("pointcloud_map")), tf_static=absp(cfg.get("tf_static")),
                logs=[absp(x) for x in cfg.get("logs") or []],
                drives={k: dict(v, bags=absp(v["bags"])) for k, v in (cfg.get("drives") or {}).items()})  # fmt: skip
@@ -86,7 +87,7 @@ def run(area, exp_id: str, code_dir: str = ROOT, drive_level=False, timeout=6 * 
     t = time.time()
     log = open(f"{E}/run.log", "w")
     for cmd in (["ingest"] if drive_level else []) + ["label"]:
-        r = subprocess.run([PY, f"{code_dir}/hdlabel/run.py", cmd, f"{E}/experiment.yaml", "--no-debug", "--scene",
+        r = subprocess.run([PY, f"{code_dir}/hdlabel/run.py", cmd, f"{E}/experiment.yaml", "--scene",
                             *meta["scenes"]], stdout=log, stderr=subprocess.STDOUT, cwd=code_dir, timeout=timeout,
                            env=dict(os.environ, PYTHONPATH=""))  # fmt: skip
         if r.returncode:

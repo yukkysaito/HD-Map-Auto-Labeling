@@ -28,6 +28,7 @@ Outputs (one root, config `output`, default output/<name>/):
 """
 
 import argparse
+import copy
 import glob
 import hashlib
 import json
@@ -538,6 +539,17 @@ def label(area, s, force):
         gts,
         force=force,
     )
+    # annotation plan: the tool variants for this scene (registry `when` conditions on the scene's facts)
+    from hdlabel.agents import annotate, registry
+
+    reg = registry.load()
+    fx = annotate.facts(area, s, drives)
+    chosen = annotate.plan(reg, fx)
+    json.dump(dict(facts=fx, tools=chosen), open(f"{S}/plan.json", "w"), indent=1)
+    ov = annotate.overlay(reg, chosen)
+    if ov:  # another variant than the active one for this scene: its settings
+        area = copy.copy(area)
+        area.cfg = merge(area.cfg, ov)
     drv = sum((["--drive", area.data(d), area.calib(d)] for d in drives), [])
     calibs = [f"{area.calib(d)}/time_offset.json" for d in drives]
     step(
@@ -843,6 +855,7 @@ def dataset_index(area):
         if not os.path.exists(f):
             continue
         sc = json.load(open(f))
+        pf = f"{area.scene_dir(area.owners.get(s['id'], s['id']))}/plan.json"
         vf = f"{area.dbg_dir(s['id'])}/verification.json"
         v = json.load(open(vf)) if os.path.exists(vf) else dict(state="unverified", reasons=[])
         if gate and v["state"] != "accepted":  # only verified data is training data
@@ -861,6 +874,7 @@ def dataset_index(area):
                 bags=sc["bags"],
                 t_range=s["t_range"],
                 verification=dict(state=v["state"], verifier=v.get("verifier"), prompt=v.get("prompt")),
+                plan=json.load(open(pf)) if os.path.exists(pf) else None,
             )
         )
     n = {k: sum(o["qa_ok"] for o in out if o["split"] == k) for k in ("train", "val")}

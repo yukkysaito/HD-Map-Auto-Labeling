@@ -10,6 +10,11 @@ ground truth for online HD-map models that take multi-camera, multi-frame input:
 **No HD map (lanelet2 / vector map) is used.** No flat-ground assumption either: slopes, overpasses and roads under
 elevated structures are handled.
 
+The labelling tools are driven by AI agents (Claude, ChatGPT, ... interchangeable): an independent verifier checks every
+scene against the sensor evidence and the labels are revised until they pass; recurring problems send the agents to
+research better methods, implement them as new tool variants and adopt them only if a locked benchmark shows they are
+better ([docs/AGENTS.md](docs/AGENTS.md)). A person only accepts the result.
+
 ## Requirements
 - Input
   - rosbags (mcap, ROS 2): camera images (CompressedImage) + camera_info, localization (Odometry of base_link in the map
@@ -35,6 +40,7 @@ HDLABEL_DEVICE=cpu ./autolabel run /tmp/hdlabel_demo/config.yaml
 ./autolabel status --name my_area                                                      # what is done / failed, QA, audit
 ./autolabel validate output/my_area/dataset/dataset.json                               # acceptance check of a dataset
 ./autolabel test                                                                       # tests (incl. a synthetic end-to-end run)
+./autolabel evolve my_area.yaml                                                        # agents: next improvement (docs/AGENTS.md)
 ```
 - `--logs`: globs. A directory (all `*.mcap` in it) or a single `.mcap` file is one drive.
 - Topics: `topics` (templates with the camera id) and per camera `cameras.<id>.image / camera_info` in the config.
@@ -48,9 +54,10 @@ HDLABEL_DEVICE=cpu ./autolabel run /tmp/hdlabel_demo/config.yaml
 - **Subsets**: `--drive` / `--scene` restrict the work, `--force` redoes it.
 - **Large runs**: `--no-debug` (or `debug: false`) disables debug output, `prune_frames: true` saves disk space,
   `jobs` sets the parallelism (progress and an estimate of the remaining time are printed per stage).
-- **Acceptance**: `validate` checks a dataset on the training side (files, images, poses, references, labels vs. vectors);
-  Review by an AI agent: `./autolabel review <config>` lists the scenes whose evidence pack (`debug/scenes/<scene>/check/`) waits for decisions; the agent applies them with `--scene ID --decisions FILE` (docs/AGENT_REVIEW.md).
-  Acceptance by a person: `debug/audit.html` (batch ready or not, measured error rate, the evidence of every flagged item) and `./autolabel signoff` (docs/ANNOTATION.md).
+- **Verification and acceptance**: `run` verifies every scene with the verifier agent (`agents` / `verification` in the
+  config; without a model the scenes stay `uncertain`) and the training data lists only accepted scenes. A person
+  accepts on `debug/audit.html` and `./autolabel signoff` (docs/ANNOTATION.md); `validate` checks a dataset on the
+  training side (files, images, poses, references, labels vs. vectors).
 
 ## Output (`output/<name>/`, change with `--output` / `output`)
 ```
@@ -66,10 +73,12 @@ debug/                      for checking (may be deleted / disabled)
   scenes/<scene>/check/     evidence pack for the reviewer (items.json, sheet_*.jpg, tile_*.jpg)
   scenes/<scene>/reviewed/  evidence of the decided items (shown on the acceptance page)
   scenes/<scene>/review.html  manual review in a browser (optional)
+  scenes/<scene>/verification.json  state (accepted / needs_revision / rejected / uncertain) and issues
   audit.json|html           the acceptance page: readiness, risk ranking, review results, evidence, sign-off
   logs/, dataset_stats.json, qa/, eval/
 work/                       intermediate data for resuming (per drive: images, poses, segmentation, calibration; per scene: surface, labels)
 status.json                 success / failure, notes and log of every work item
+agent/                      agent call cache and cost ledger;  experiments/<id>/  candidate tool runs (docs/AGENTS.md)
 ```
 Reference loader for training: `hdlabel/loader.py`. The BEV range and resolution are chosen in the loader (labels are
 stored once, in map coordinates).
@@ -91,7 +100,8 @@ stored once, in map coordinates).
 | Document | Contents |
 |---|---|
 | [docs/DATASET.md](docs/DATASET.md) | Training data format (frames, raster, vectors, multi-frame input, loader) |
-| [docs/AGENT_REVIEW.md](docs/AGENT_REVIEW.md) | Review by an AI agent: evidence packs, criteria, decisions |
+| [docs/AGENTS.md](docs/AGENTS.md) | Agents: verification, data / tool / model loops, protected benchmark, registry, knowledge |
+| [docs/AGENT_REVIEW.md](docs/AGENT_REVIEW.md) | Evidence packs, decision criteria and the manual decisions file |
 | [docs/ANNOTATION.md](docs/ANNOTATION.md) | Acceptance by a person, manual review and review fix files |
 | [docs/MAINTENANCE.md](docs/MAINTENANCE.md) | Code structure, tests and regression checks, known limitations, pitfalls |
 | [env/README.md](env/README.md) | Python environment |

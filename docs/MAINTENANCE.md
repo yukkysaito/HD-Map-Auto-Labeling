@@ -17,6 +17,8 @@
 | `hdlabel/evidence.py` | Evidence packs for the reviewer (`debug/scenes/<scene>/check/`: map and camera crops per item, map tiles) |
 | `hdlabel/agent_review.py` | Reviewer decisions -> review files; a person's sign-off -> rejected scenes |
 | `hdlabel/review_html.py` | Which elements are checked (low confidence + spot check), the manual review page (`review.html`) |
+| `hdlabel/agents/` | Agent layer (docs/AGENTS.md): `llm` (providers, cache, ledger, budget), `verify` (verifier + scene states), `bench` (locked reference, metrics, gate, verifier accuracy), `experiment` (candidates in isolation), `registry` (`tools/registry.yaml`), `knowledge` (SQLite FTS), `orchestrator` (evolve), `training` (model loop), `cli`, `prompts/` |
+| `tools/registry.yaml` | The tools, their variants, the active one and its adoption history |
 | `hdlabel/steps/*.py` | The processing steps (each a `main(argv)`, runs standalone, see `-h`). Steps are connected only through files |
 | `hdlabel/eval/` | `compare_labels` / `compare_vectors`: repeatability between two drives (`./autolabel qa`).<br>`dataset_stats`: dataset statistics.<br>`train_smoke` / `online_eval`: learnability check and per-cycle evaluation |
 | `tests/` | Unit tests + `test_pipeline_synthetic.py`: the whole pipeline on synthetic data (`tests/synthetic.py`) on CPU, labels checked against the synthetic world (~1 min) |
