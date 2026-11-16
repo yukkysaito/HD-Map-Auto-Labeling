@@ -90,7 +90,7 @@ the deck on a bridge; levels never mix.
 
 | kind | geometry | main attributes |
 |---|---|---|
-| `lane_line` | `points` line | one element per painted piece, as on the road: each dash of a dashed line is its own element. `style`: solid (>= 6 m) / short, by length only; `length`; `painted` (1.0) and `segments` (`[[0, length]]`) kept for the format |
+| `lane_line` | `points` line | one element per painted piece, as on the road: each dash of a dashed line is its own element. `line_id`: pieces of one line (collinear dashes) share it; `style` of that line: solid / dashed / short; `length` of the piece; `painted` (1.0) and `segments` (`[[0, length]]`) kept for the format |
 | `arrow` | `points` line (tail -> tip) | `directions`: a set of `straight` / `left` / `right` (e.g. `["straight", "left"]`), `shape`: S / L / R / SL / SR, `outlines` (paint outline rings, 3D). For e.g. right-turn-only lanes |
 | `stop_line` | `points` line | `width` (m; `vectors.geojson` also has `length`). A wide (~0.45 m) line across the lanes; before format 3 these were `lane_line` |
 | `curb` | `points` line | |

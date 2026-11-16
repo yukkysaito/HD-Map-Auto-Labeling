@@ -3,7 +3,8 @@
 Elements (3D, map frame; z from the map surface):
   lane_line       LineString  thin road markings as painted: one element per painted piece (each dash of a dashed line
                               is its own element; gaps under --paint-gap m, e.g. worn paint, are bridged).
-                              props: style solid (>= 6 m) | short (by length only), width (m), length (m),
+                              props: line_id (pieces chained into one line: collinear, gap <= --max-gap m over road),
+                              style of that line solid | dashed | short, width (m), length (m) of the piece,
                               painted (1.0) and segments ([[0, length]]) kept for the format
   stop_line       LineString  a thin line ACROSS the lanes (common.stop_lines: |cos| to the direction of the long lane lines
                               around < --stop-cos, paint wider than --stop-width, longer than --stop-length). props: length, width
@@ -11,7 +12,7 @@ Elements (3D, map frame; z from the map surface):
   arrow           LineString  lane direction arrow, tail -> tip (from OUT_OF_project_labels/arrows.json, steps/arrows.py).
                               props: directions (straight / left / right, e.g. ["straight", "left"]), shape (S, L, R, SL,
                               SR), score, length, width, outlines (paint outline rings, map xyz). Its paint is not turned
-                              into lane lines / areas, nor are dashes on its axis behind the tail (dashed arrow tails)
+                              into lane lines / areas; other paint around it (e.g. dashes behind its tail) is output as is
   crosswalk       Polygon     crosswalk stripes merged into one area
   curb            LineString  curb skeleton paths joined across small gaps (occlusions)
   curb_candidate  LineString  with --curb-filter (and --gt trajectories): a curb line that is not a road kerb by
@@ -61,7 +62,7 @@ def main(argv=None):
         "--max-gap",
         type=float,
         default=13.0,
-        help="max gap between collinear dashes when lines are chained for the traffic direction (stop lines; m)",
+        help="max gap between collinear dashes chained into one line (line_id, style, stop-line direction; m)",
     )
     p.add_argument(
         "--paint-gap",
@@ -72,13 +73,6 @@ def main(argv=None):
     p.add_argument("--curb-gap", type=float, default=3.0)
     p.add_argument("--min-curb", type=float, default=1.0)
     p.add_argument("--simplify", type=float, default=0.05, help="Douglas-Peucker tolerance for lines (m)")
-    p.add_argument(
-        "--arrow-tail",
-        type=float,
-        default=15.0,
-        help="lane-line pieces on an arrow axis up to this far behind its tail "
-        "are part of the arrow (dashed tails), not lane lines (m)",
-    )
     p.add_argument(
         "--stop-width",
         type=float,
@@ -393,25 +387,13 @@ def main(argv=None):
         )
 
     # ---- markings: thin -> lane line pieces, wide / compact -> areas
-    # arrows are elements of their own: their paint (outline + 0.3 m) is not turned into lines / areas, and lane-line pieces on
-    # the arrow axis behind the tail (dashed arrow tails, up to --arrow-tail m) are not lane lines
+    # arrows are elements of their own: their paint (outline + 0.3 m) is not turned into lines / areas; all other paint is
     afoot = np.zeros(cls.shape, np.uint8)
     for ar in ARROWS:
         for o in ar["outlines"]:
             ring = np.array([q[:2] for q in o]) - origin[:2]
             cv2.fillPoly(afoot, [np.round((ring - lo) / res - 0.5).astype(np.int32)[:, ::-1]], 1)
     afoot = cv2.dilate(afoot, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))) > 0
-
-    def on_arrow_axis(xy):
-        for ar in ARROWS:
-            t0, t1 = np.array(ar["tail"][:2]) - origin[:2], np.array(ar["tip"][:2]) - origin[:2]
-            d = (t1 - t0) / np.linalg.norm(t1 - t0)
-            q = xy - t0
-            s_ = q @ d
-            lat = np.abs(q[:, 0] * d[1] - q[:, 1] * d[0])
-            if np.all(lat < 0.3) and np.all((s_ > -a.arrow_tail) & (s_ < np.linalg.norm(t1 - t0) + 0.5)):
-                return True
-        return False
 
     mk = smooth_mask((cls == C["marking"]) & ~afoot)
     dt = distance_transform_edt(mk)
@@ -435,7 +417,7 @@ def main(argv=None):
                         cv2.circle(wide, (int(c), int(r)), int(d) + 1, 1, -1)
                     continue
                 xy = smooth_line(px2xy(q[run]))
-                if plen(xy) >= a.min_line and not on_arrow_axis(xy):
+                if plen(xy) >= a.min_line:
                     pieces.append(xy)
     area_mask |= (wide > 0) & mk
     bad = [C["crosswalk"], C["curb"], C["sidewalk"], C["offroad"]]
@@ -451,6 +433,7 @@ def main(argv=None):
         style = "solid" if painted >= 0.85 and L >= 6 else ("dashed" if len(segs) >= 2 else "short")
         lls.append(dict(xy=xy, segs=segs, length=L, painted=painted, width=w, style=style))
     stop = stop_lines(lls, a.stop_width, a.stop_length, a.stop_cos)
+    line_id = 0
     for k, l in enumerate(lls):
         if k in stop:
             add(
@@ -460,7 +443,8 @@ def main(argv=None):
                 length=round(l["length"], 2),
                 width=round(l["width"], 2),
             )
-        else:  # the chain only served the traffic direction; the output follows the paint, piece by piece
+        else:  # one element per painted piece; the pieces of one line share line_id and the line's style
+            line_id += 1
             for s0, s1 in painted_pieces(l["segs"], a.paint_gap):
                 L = s1 - s0
                 if L < a.min_line:
@@ -469,7 +453,8 @@ def main(argv=None):
                     "lane_line",
                     "LineString",
                     simplify(cut(l["xy"], s0, s1), a.simplify),
-                    style="solid" if L >= 6 else "short",
+                    style=l["style"],
+                    line_id=line_id,
                     painted=1.0,
                     length=round(L, 2),
                     width=None if l["width"] is None else round(l["width"], 2),

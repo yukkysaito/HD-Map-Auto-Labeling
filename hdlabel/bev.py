@@ -21,7 +21,7 @@ from scipy.ndimage import map_coordinates
 from scipy.spatial import cKDTree
 from shapely.geometry import Polygon, box
 
-LINE_ATTRS = ("observed", "type", "directions", "shape", "style", "width", "confidence", "observations")
+LINE_ATTRS = ("observed", "type", "directions", "shape", "style", "line_id", "width", "confidence", "observations")
 POLY_ATTRS = ("type", "confidence", "observations")
 
 

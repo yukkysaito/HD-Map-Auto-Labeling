@@ -62,11 +62,17 @@ def test_arrow(out):
 
 def test_dashes_are_separate(out):
     """lane lines follow the paint: each 5 m dash of the dashed lines (5 m gaps) is its own element, never one line
-    across the gaps."""
-    dash = [road(f["geometry"]["coordinates"]) for f in features(out, "lane_line")]
-    dash = [P for P in dash if abs(np.median(np.abs(P[:, 1])) - 2.0) < 0.3]  # the dashed lines at |y| = 2 m
-    assert len(dash) >= 4
-    assert all(np.ptp(P[:, 0]) < 5.6 for P in dash)  # no element spans a gap
+    across the gaps; the dashes of one line share its line_id and style dashed."""
+    fs = [
+        f
+        for f in features(out, "lane_line")
+        if abs(np.median(np.abs(road(f["geometry"]["coordinates"])[:, 1])) - 2.0) < 0.3
+    ]
+    assert len(fs) >= 4
+    assert all(np.ptp(road(f["geometry"]["coordinates"])[:, 0]) < 5.6 for f in fs)  # no element spans a gap
+    assert all(f["properties"]["style"] == "dashed" for f in fs)
+    ids = [f["properties"]["line_id"] for f in fs]
+    assert len(set(ids)) < len(ids)  # dashes grouped into lines
 
 
 def test_crosswalk(out):
