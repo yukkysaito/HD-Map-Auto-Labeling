@@ -59,7 +59,8 @@ def test_long_rings_and_no_trajectory():
 
 
 def test_config_default_off_and_variant():
-    cfg = load_config(None)
+    reg = registry.with_variant(registry.load(), "vectorize", "default")  # whatever variant is active now
+    cfg = load_config(None, registry=reg)
     area = types.SimpleNamespace(cfg=cfg)
     assert cfg["markings"]["curb_filter"]["enabled"] is False
     assert curb_args(area, ["a/gt.npy"]) == []  # default: the vectorize command line is unchanged
