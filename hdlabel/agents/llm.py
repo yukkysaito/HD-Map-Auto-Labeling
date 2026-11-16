@@ -233,7 +233,12 @@ class Agents:
                 if self.budget and self.spent >= self.budget:
                     raise BudgetExceeded(f"agent budget {self.budget} USD spent")
             t = time.time()
-            rep = PROVIDERS[prov](m["model"], system, prompt, list(images), tuple(tools), m["timeout"], cwd)
+            try:
+                rep = PROVIDERS[prov](m["model"], system, prompt, list(images), tuple(tools), m["timeout"], cwd)
+            except ProviderError:
+                raise
+            except Exception as e:  # SDK errors (auth, rate limit, network, missing package): one kind for the callers
+                raise ProviderError(f"{prov}: {type(e).__name__}: {str(e)[:300]}") from e
             rep.seconds = round(time.time() - t, 1)
             if not rep.cost_usd and rep.meta.get("tokens") and prov in self.price:
                 rep.cost_usd = rep.meta["tokens"] / 1e6 * float(self.price[prov])

@@ -16,6 +16,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest", "pyflakes", "ruff"]
+agents = ["openai", "anthropic"]   # API providers of hdlabel/agents/llm.py (the CLI providers need no package)
 
 [tool.setuptools.packages.find]
 include = ["hdlabel*"]

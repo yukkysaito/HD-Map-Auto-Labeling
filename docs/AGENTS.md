@@ -16,7 +16,7 @@ final result (`debug/audit.html`) and owns the benchmark.
 | default | anything else | claude_cli sonnet |
 
 A role is `{provider, model, timeout}`. Providers: `claude_cli`, `codex_cli`, `openai`, `anthropic`, `replay` (tests);
-CLI paths in `agents.bin`. Calls are cached (a re-run costs nothing and repeats the answers), logged with their cost
+CLI paths in `agents.bin`; the API providers need `pip install -e .[agents]` and OPENAI_API_KEY / ANTHROPIC_API_KEY. Calls are cached (a re-run costs nothing and repeats the answers), logged with their cost
 in `output/<name>/agent/ledger.jsonl`, and stop at `agents.budget_usd`. Change a model by editing one line, then
 measure it: `./autolabel bench verifier <config> --role verifier` (accuracy on the locked reference).
 

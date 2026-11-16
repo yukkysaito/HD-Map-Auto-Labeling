@@ -130,3 +130,56 @@ def test_annotation_plan_conditions():
     ov = annotate.overlay(reg, {"vectorize": "dense"})
     assert ov == {"markings": {"curb_filter": {"enabled": True}}}  # `when` is not a setting
     assert registry.overlay(registry.with_variant(reg, "vectorize", "dense")) == ov
+
+
+def test_api_providers_request_and_parse(tmp_path, monkeypatch):
+    """the OpenAI (Responses API) and Anthropic (Messages API) providers, with stand-in SDK modules: the request they
+    build (model, system, image as base64, web search tool) and the parsing of the answer through the verifier."""
+    import sys
+    import types
+
+    img = tmp_path / "a.jpg"
+    img.write_bytes(b"\xff\xd8fake")
+    answer = '{"items": {"0": {"decision": "off", "confidence": 0.7, "reason": "0.6 m left"}}}'
+    sent = {}
+
+    class OpenAI:
+        def __init__(self, timeout):
+            self.responses = self
+
+        def create(self, **kw):
+            sent["openai"] = kw
+            return types.SimpleNamespace(output_text=answer, usage=types.SimpleNamespace(total_tokens=1234))
+
+    class Messages:
+        def create(self, **kw):
+            sent["anthropic"] = kw
+            u = types.SimpleNamespace(input_tokens=1000, output_tokens=200)
+            return types.SimpleNamespace(content=[types.SimpleNamespace(type="text", text=answer)], usage=u)
+
+    anth = types.SimpleNamespace(Anthropic=lambda timeout: types.SimpleNamespace(messages=Messages()), NOT_GIVEN=None)
+    monkeypatch.setitem(sys.modules, "openai", types.SimpleNamespace(OpenAI=OpenAI))
+    monkeypatch.setitem(sys.modules, "anthropic", anth)
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
+    roles = dict(verifier=dict(provider="openai", model="gpt-x"), confirmer=dict(provider="anthropic", model="c-x"))
+    ag = Agents(dict(roles=roles, price_per_mtok=dict(openai=10.0)), str(tmp_path / "agent"))
+    rows = [dict(key="0", image=str(img), kind="curb", reason="spot", confidence=0.5, size_m=2.0)]
+    for role, prov in (("verifier", "openai"), ("confirmer", "anthropic")):
+        assert ag.available(role)
+        r = judge_items(ag, rows, role)["0"]
+        assert r["decision"] == "off" and r["confidence"] == 0.7 and r["model"] == f"{prov}/{roles[role]['model']}"
+    o, a = sent["openai"], sent["anthropic"]
+    assert (
+        o["model"] == "gpt-x"
+        and o["instructions"]
+        and o["input"][0]["content"][1]["image_url"].startswith("data:image/jpeg;base64,")
+    )
+    assert a["model"] == "c-x" and a["system"] and a["messages"][0]["content"][0]["source"]["type"] == "base64"
+    ag.ask("verifier", "find papers", tools=("WebSearch",), cache=False)
+    assert sent["openai"]["tools"] == [{"type": "web_search"}]
+    led = [json.loads(x) for x in open(tmp_path / "agent" / "ledger.jsonl")]
+    assert led[0]["cost_usd"] == pytest.approx(1234 / 1e6 * 10.0)  # token providers priced by price_per_mtok
+    # an SDK error (e.g. an expired key) becomes ProviderError and the verifier answers unsure, not a crash
+    monkeypatch.setattr(OpenAI, "create", lambda self, **kw: (_ for _ in ()).throw(RuntimeError("401 expired key")))
+    assert judge_items(ag, [dict(rows[0], kind="lane_line")], "verifier")["0"]["decision"] == "unsure"
