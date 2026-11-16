@@ -72,6 +72,11 @@ def attempts(kb, pid: str) -> list[dict]:
     return [r for r in kb.list(kind="attempt", limit=200) if r["data"].get("problem") == pid]
 
 
+def facts(kb) -> str:
+    """knowledge records tagged data-facts (what the input data has / lacks): given to every research / engineer call."""
+    return "\n".join(f"- {r['title']}: {r['text']}" for r in kb.list(tag="data-facts", limit=20)) or "(none recorded)"
+
+
 def research(area, kb, problem: dict, extra="") -> dict:
     """researcher role (web search) -> candidates; each recorded in the knowledge store."""
     from hdlabel.agents import registry
@@ -82,13 +87,14 @@ def research(area, kb, problem: dict, extra="") -> dict:
     prompt = (f"Problem ({problem['id']}, {problem['count']} cases in {len(problem['scenes'])} scenes): "
               f"{problem.get('statement') or problem['id']}\nExamples (verifier notes): "
               + "; ".join(str(e.get("note")) for e in problem["examples"]) + f"\n{extra}\n\nCurrent tools:\n"
-              + registry.describe() + "\n\nKnown (knowledge store):\n" + kb.context(q))  # fmt: skip
+              + registry.describe() + "\n\nFacts of the data (always true here):\n" + facts(kb)
+              + "\n\nKnown (knowledge store):\n" + kb.context(q))  # fmt: skip
     rep = area.agents.ask(
         "researcher", prompt, system=open(f"{PROMPTS}/researcher.md").read(), tools=("WebSearch", "WebFetch")
     )
     res = rep.json()
     for c in res.get("candidates", []):
-        kb.add("research", c.get("name", "?"), f"{c.get('idea')} | apply: {c.get('apply')} | expected: {c.get('expected')}",
+        c["_kb"] = kb.add("research", c.get("name", "?"), f"{c.get('idea')} | apply: {c.get('apply')} | expected: {c.get('expected')}",
                [problem["tool"], problem["group"], problem["type"], c.get("type", "")], status="open",
                data=dict(c, problem=problem["id"], model=f"{rep.provider}/{rep.model}"), area=area.name)  # fmt: skip
     return res
@@ -125,7 +131,8 @@ def engineer(area, kb, problem: dict, candidate: dict, branch: str) -> dict:
     wt = worktree(branch)
     task = (f"Tool: {problem['tool']}\nProblem: {problem.get('statement') or problem['id']} ({problem['count']} cases)\n"
             f"Evidence examples: {json.dumps(problem['examples'])[:2500]}\n\nApproach to implement: {json.dumps(candidate)}\n\n"
-            f"Registry entry: {registry.describe(tools=[problem['tool']])}\nKnown: {kb.context(problem['id'] + ' ' + candidate.get('name', ''))}\n"
+            f"Registry entry: {registry.describe(tools=[problem['tool']])}\nData facts:\n{facts(kb)}\n"
+            f"Known: {kb.context(problem['id'] + ' ' + candidate.get('name', ''))}\n"
             f"Main checkout (read only, has the venv and the data): {ROOT}\nPython: {ROOT}/.venv/bin/python\n"
             f"Scene data to look at (read only): {area.work}/scenes, {area.dbg}/scenes\n")  # fmt: skip
     rep = area.agents.ask("engineer", task, system=open(f"{PROMPTS}/engineer.md").read(),
@@ -179,6 +186,12 @@ def tool_loop(area, kb, problem: dict, cfg: dict) -> dict:
             dict(experiment=branch, gain=r["gate"]["gain"], target=a.target),
             note=pick.get("name"),
         )
+    wt = eng["worktree"]  # the worktree is not needed any more; a rejected candidate's branch is kept (git log)
+    subprocess.run(["git", "worktree", "remove", "--force", wt], cwd=ROOT)
+    if ok:
+        subprocess.run(["git", "branch", "-d", branch], cwd=ROOT)
+    if pick.get("_kb"):  # the research record: tried, with which result
+        kb.update(pick["_kb"], status="done" if ok else "failed")
     kb.update(rid, status="done" if ok else "failed",
               text=f"{pick.get('name')}: gain {r['gate']['gain']} on {a.target}; " + ("; ".join(r["gate"]["fails"]) or "adopted"),
               data=dict(problem=problem["id"], candidate=pick, gate=r["gate"], branch=branch))  # fmt: skip
