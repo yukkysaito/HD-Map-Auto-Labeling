@@ -45,6 +45,9 @@ markings:
   line_width: 0.5             # painted lines wider than this (m) are areas (marking_area), thinner ones lines
   stop_line: {min_width: 0.35, min_length: 3.0, max_cos: 0.35}  # a line across the lanes (|cos| to them < max_cos), paint
                                                                  # at least min_width wide (lane lines ~0.15 m)
+  fragments: {min_confidence: 0.5, short_length: 2.2, short_min_views: 20}  # lane-line pieces dropped as noise: below
+                              # min_confidence, or shorter than short_length (m) and seen by fewer than short_min_views
+                              # camera views (set min_confidence 0, short_length 0 to keep all; docs/MAINTENANCE.md)
 
 # ---- processing
 segmentation:
@@ -65,7 +68,7 @@ dataset: {every_s: 0.5, val_every_s: null,  # val sample spacing (null = every_s
           bev: {x: [-50, 150], y: [-80, 80], res: 0.2},  # default ego-frame crop (the loader may use any range / res)
           split: {tile_m: 250, val_every: 5}}           # val = every 5th map tile (by location)
 debug: true                   # debug images + PCDs + audit (--no-debug or false for large runs)
-audit: {sample: 5, seed: 0, max_risk: 0.3}  # acceptance: scenes over max_risk need review; `sample` random scenes to inspect
+audit: {sample: 5, seed: 0, max_risk: 0.3, max_spot_error: 0.1}  # acceptance: scenes over max_risk need review; `sample` random scenes to inspect
 prune_frames: false           # true: after export delete frames neither the dataset nor labelling uses
 jobs: {cpu: 4, gpu: 1}        # parallel scenes / drives; GPU steps at once
 device: auto                  # torch device of the GPU steps: auto (cuda if available) / cuda / cuda:1 / cpu (slow; tests)

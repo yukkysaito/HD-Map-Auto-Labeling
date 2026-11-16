@@ -1,10 +1,20 @@
-# Review (visual check and annotation fixes)
+# Review and acceptance
+
+Who does what:
+- **Review (an AI agent)**: decides, item by item, whether the extraction is right (is an outline on real paint / a
+  real curb). Its input is the evidence pack of every scene; its decisions become review files. Procedure and criteria:
+  [AGENT_REVIEW.md](AGENT_REVIEW.md).
+- **Acceptance (a person)**: `output/<name>/debug/audit.html`. It shows whether the batch is ready, the error rate the
+  reviewer measured on a random spot check, missed paint, and the evidence of everything the reviewer deleted, found
+  off or could not judge, plus random items it accepted (to check the reviewer). The person rejects scenes if needed and
+  saves a sign-off (`./autolabel signoff <config> --signoff signoff.json`).
 
 Most errors of the automatic labels come from the segmentation (image semantics), not from the geometry. Examples:
-a whole zebra (channelizing) zone becomes "lane marking", a red-and-white crosswalk becomes "lane marking", raised
-vegetation pulls the height. Agreement between two drives cannot measure this (both have the same error), so the
-images are checked. The reviewer can be a person or a vision-capable LLM agent (it can read the sheets and write the
-fix files).
+shadows or patched asphalt taken for paint, paint on kerbs, raised vegetation pulling the height. Agreement between two
+drives cannot measure this (both have the same error), so the images are checked.
+
+The rest of this page is the manual path: a person reviewing in a browser (`review.html`) or writing review files by
+hand, e.g. to set the kind / type of an element, which the agent review does not judge.
 
 ## Procedure
 0. Pick the scenes: `output/<name>/debug/audit.html` ranks every scene by the risk of the automatic checks (curb vs.
@@ -13,17 +23,25 @@ fix files).
    scenes over `max_risk` and the random sample; the batch is accepted when none is over `max_risk` after the fixes.
 1. `./autolabel run <config>` (or `./autolabel debug <config> [--scene ID ...]`)
    -> `output/<name>/debug/scenes/<scene>/`
-   - `review.html` (**start here**): open it in a browser. The ortho image with the vectors (drag: pan, wheel: zoom);
-     click an element to drop it or change its kind / type / style / arrow directions, "add arrow" + two clicks (tail,
-     tip) adds a missed arrow, the camera sheets are on the right. "Save review json" downloads `<scene>.json`, already
-     merged with the fixes of the existing file: put it into the review directory (step 3).
+   - `review.html` (**start here**): open it in a browser. The reviewer judges the **extraction only**: is the
+     outline on real paint / a real curb, and does it follow the paint. What kind of marking it is (arrow directions,
+     crosswalk, zebra ...) is not asked; those attributes stay as the pipeline set them. The page has three steps:
+     1. **Check items**: every road marking / curb with confidence < 0.5, then a random spot check of 10 confident
+        ones (fixed per scene; the low-confidence list alone cannot show confident errors). The map zooms to each one.
+        Keys: `Space` correct, `X` no paint / curb here (deleted), `1` there, but the outline is clearly off
+        (recorded), `←` / `→` previous / skip. Hold `H` to hide the lines and see the paint. A camera sheet is shown
+        when one was taken within 40 m.
+     2. **Find missing**: move along the road; `P` marks missed paint / curbs or any other problem with a note.
+     3. **Finish**: your name, **Accept** or **Reject** (too wrong to fix here), which saves `<scene>.json`.
+        Put it at the path shown on the page (step 3 below).
+     Unsaved work is kept in the browser and restored when the page is opened again.
    - `sample_<k>.jpg`: labels drawn on every camera image + the BEV (raster + vectors).
      Overlay colours: road green, lane marking red, crosswalk magenta, curb blue, sidewalk yellow, manhole cyan.
      Labels are drawn where rays meet the road surface, so they also appear on cars and buildings (occlusion is not
      modelled). That is not an error.
    - `map.jpg`: ortho image of the scene + vectors + element numbers + 10 m grid (map coordinates, labelled every 50 m).
    - `elements.jpg`: every area element (marking_area, crosswalk) cut out of the ortho image (number, area, crop width).
-     **The fastest way to check element types** (tens of elements of a scene in one image).
+     Optional: for checking element types by hand (tens of elements of a scene in one image).
    - `arrows.jpg`: arrows found automatically (sharp road patch from a nearby camera image + outline + S/L/R/SL/SR + score).
    - `elements.json`: element number -> kind, attributes, a point on the element (map coordinates).
    - `preview_<k>.jpg`: reference camera image + the BEV of the training data (raster + vectors; arrows with outline and directions).
@@ -32,10 +50,11 @@ fix files).
    - `map_ground.pcd` (LiDAR ground points), `labels.pcd` (labels, rgb + label), `vectors.pcd` (vectors, rgb + kind):
      overlay them in a PCD viewer (e.g. CloudCompare) to check positions and heights in 3D.
 2. What to look at
-   - In the camera images: does the red (lane marking) lie on the real paint? (offset = time offset / calibration problem)
-   - Are zebra zones, red-and-white crosswalks, text and arrows of the right kind?
-   - Lines that do not exist (shadows, patched asphalt, tyre marks) or missing lines.
-   - In the BEV: are lane lines correctly dashed / solid?
+   - Does the outline lie on the real paint? (an offset of everything = time offset / calibration problem: reject)
+   - Outlines on things that are not paint (shadows, patched asphalt, tyre marks) or paint without an outline.
+   - Curbs: is there a raised edge where the line is?
+   - Optional, by hand in the json: the kind / type / arrow directions (`set` fixes below, `elements.jpg`,
+     `arrows.jpg`). These attributes are a bonus of the base annotation; a training setup can drop them.
 3. Put the result into `review/<name>/<scene>.json` (directory: config `review_dir`), saved by review.html or written
    by hand (format below). Scenes without a file are unreviewed.
 4. `./autolabel run <config>` applies the fixes (only vectorize and later steps are redone).
@@ -56,6 +75,10 @@ fix files).
   ]
 }
 ```
+- Written by review.html in addition: `checked` (elements confirmed as correct, so a reopened page continues
+  where it stopped) and `issues` (`{"at": [x, y], "note": "..."}`, with `kind` when it is about an element whose
+  outline is off; for a person to follow up, not applied automatically). `verdict` is `ok` (accepted, nothing
+  found), `fixed` (accepted with deletions / issues) or `bad` (rejected).
 - `reject: true`: every sample of the scene gets `qa.ok = false` (excluded from training). `reject_samples`: single samples (stamps).
 - `fixes`: `at` is in map coordinates (the `at` of `elements.json` can be used as is). The fix applies to the element
   of that kind nearest to `at` (within 1.5 m). `drop: true` deletes it, `set` overwrites attributes (`reviewed: true`

@@ -71,6 +71,9 @@ def main(argv=None):
         help="stop line: min paint width (m; lane lines ~0.15, stop lines ~0.45)",
     )
     p.add_argument("--stop-length", type=float, default=3.0, help="stop line: min length (m)")
+    p.add_argument("--frag-conf", type=float, default=0.5, help="lane lines below this confidence are dropped")
+    p.add_argument("--frag-length", type=float, default=2.2, help="lane lines shorter than this (m) ...")
+    p.add_argument("--frag-views", type=int, default=20, help="... and seen in fewer views are dropped")
     p.add_argument(
         "--stop-cos",
         type=float,
@@ -573,6 +576,19 @@ def main(argv=None):
         pr["confidence"] = round(float((v[ok, c] / tot[ok]).mean()), 3) if ok.any() else None
         pr["observations"] = int(np.median(NV[k])) if len(k) else 0
 
+    # ---- lane-line fragments: low confidence, or short and seen by few views. Review of 70 lane lines: such
+    # fragments were wrong 42 times out of 52 (shadows, joints, kerb edges, worn asphalt); they are 3.8 % of the lane
+    # line length. Elements a review set attributes on (reviewed) are kept.
+    def fragment(pr):
+        if pr["kind"] != "lane_line" or pr.get("reviewed"):
+            return False
+        low = pr["confidence"] is not None and pr["confidence"] < a.frag_conf
+        return low or (pr["length"] < a.frag_length and pr["observations"] < a.frag_views)
+
+    n0 = len(feats)
+    feats = [f for f in feats if not fragment(f["properties"])]
+    dropped_fragments = n0 - len(feats)
+
     # ---- outputs
     crs = dict(type="name", properties=dict(name="map frame of the label map (Autoware map, metres)"))
     json.dump(dict(type="FeatureCollection", crs=crs, features=feats), open(f"{a.out}/vectors.geojson", "w"))
@@ -593,6 +609,7 @@ def main(argv=None):
             params=vars(a),
             fixes_in_grid=len(fixes),
             fixes_applied=applied,
+            dropped_fragments=dropped_fragments,
             elements=summ,
         ),
         open(f"{a.out}/vectors.json", "w"),

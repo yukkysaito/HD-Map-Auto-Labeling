@@ -103,6 +103,9 @@ Every marking (lane_line, stop_line, arrow, marking_area), crosswalk and curb el
 share of its class in the camera votes of its cells, 0..1) and `observations` (median number of camera views of its
 cells): use them to weight or filter elements in training.
 
+Lane-line fragments that are mostly noise are not in the vectors: confidence < 0.5, or shorter than 2.2 m and seen by
+fewer than 20 camera views (config `markings.fragments`). The raster (`map.npz`) is not filtered.
+
 Mapping to MapTR-style classes (the loader's `VECTOR_CLASSES`):
 - divider = `lane_line`
 - boundary = `curb` + `road_boundary` (observed)

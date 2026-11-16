@@ -49,8 +49,8 @@ HDLABEL_DEVICE=cpu ./autolabel run /tmp/hdlabel_demo/config.yaml
 - **Large runs**: `--no-debug` (or `debug: false`) disables debug output, `prune_frames: true` saves disk space,
   `jobs` sets the parallelism (progress and an estimate of the remaining time are printed per stage).
 - **Acceptance**: `validate` checks a dataset on the training side (files, images, poses, references, labels vs. vectors);
-  `debug/audit.html` ranks the scenes by the risk of the automatic checks and picks a random sample to inspect;
-  `debug/scenes/<scene>/review.html` fixes elements in a browser (docs/ANNOTATION.md).
+  Review by an AI agent: `./autolabel review <config>` lists the scenes whose evidence pack (`debug/scenes/<scene>/check/`) waits for decisions; the agent applies them with `--scene ID --decisions FILE` (docs/AGENT_REVIEW.md).
+  Acceptance by a person: `debug/audit.html` (batch ready or not, measured error rate, the evidence of every flagged item) and `./autolabel signoff` (docs/ANNOTATION.md).
 
 ## Output (`output/<name>/`, change with `--output` / `output`)
 ```
@@ -63,8 +63,10 @@ dataset/                    training data only (docs/DATASET.md); this directory
 debug/                      for checking (may be deleted / disabled)
   scenes/<scene>/           review sheets (labels drawn on the camera images, map, arrow list), previews,
                             PCDs (LiDAR ground points, labels, vectors), geometric check against the LiDAR map
-  scenes/<scene>/review.html  interactive review (click to fix, saves the review json)
-  audit.json|html           scenes ranked by risk + random sample for acceptance
+  scenes/<scene>/check/     evidence pack for the reviewer (items.json, sheet_*.jpg, tile_*.jpg)
+  scenes/<scene>/reviewed/  evidence of the decided items (shown on the acceptance page)
+  scenes/<scene>/review.html  manual review in a browser (optional)
+  audit.json|html           the acceptance page: readiness, risk ranking, review results, evidence, sign-off
   logs/, dataset_stats.json, qa/, eval/
 work/                       intermediate data for resuming (per drive: images, poses, segmentation, calibration; per scene: surface, labels)
 status.json                 success / failure, notes and log of every work item
@@ -89,7 +91,8 @@ stored once, in map coordinates).
 | Document | Contents |
 |---|---|
 | [docs/DATASET.md](docs/DATASET.md) | Training data format (frames, raster, vectors, multi-frame input, loader) |
-| [docs/ANNOTATION.md](docs/ANNOTATION.md) | Visual review and review fix files |
+| [docs/AGENT_REVIEW.md](docs/AGENT_REVIEW.md) | Review by an AI agent: evidence packs, criteria, decisions |
+| [docs/ANNOTATION.md](docs/ANNOTATION.md) | Acceptance by a person, manual review and review fix files |
 | [docs/MAINTENANCE.md](docs/MAINTENANCE.md) | Code structure, tests and regression checks, known limitations, pitfalls |
 | [env/README.md](env/README.md) | Python environment |
 

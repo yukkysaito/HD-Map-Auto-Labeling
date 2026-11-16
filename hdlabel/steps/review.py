@@ -9,7 +9,8 @@
   OUT/arrows.jpg       (written by arrows.py) arrows found (sharp ground patch + outline, tip up, driver's left on the
                        left; "A<n> S+L" on map.jpg), for checking the directions
   OUT/elements.jpg     one ortho crop per not yet reviewed marking_area / crosswalk with id, area, crop size (for classifying)
-  OUT/review.html      interactive review in a browser (hdlabel/review_html.py): click elements to fix them, save the json
+  OUT/check/           evidence images + items.json of the elements to decide (hdlabel/evidence.py, docs/AGENT_REVIEW.md)
+  OUT/review.html      guided review in a browser (hdlabel/review_html.py): check items, add missed ones, accept / reject
 The reviewer writes review/<scene>.json (see docs/ANNOTATION.md); vectorize.py / export.py apply it.
 """
 
@@ -23,7 +24,7 @@ import cv2
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
-from hdlabel import review_html
+from hdlabel import evidence, review_html
 from hdlabel.bev import SceneMap
 from hdlabel.common import CLASSES, VEC_COLOR, draw_bev
 from hdlabel.mapproj import Projector
@@ -36,6 +37,9 @@ def main(argv=None):
     p.add_argument("--out", required=True, help="the scene's debug dir")
     p.add_argument("--ortho", help="ortho.jpg of the labels (project_labels.py --debug; default OUT/ortho.jpg)")
     p.add_argument("--review", help="the scene's review json (its fixes are shown in review.html)")
+    p.add_argument(
+        "--others", nargs="*", default=[], help="the other review files: what they decided is not asked again"
+    )
     p.add_argument("--n", type=int, default=3, help="samples per scene")
     p.add_argument("--width", type=int, default=560)
     a = p.parse_args(argv)
@@ -213,12 +217,39 @@ def main(argv=None):
             [cv2.IMWRITE_JPEG_QUALITY, 88],
         )
     cv2.imwrite(f"{a.out}/map.jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 88])
-    review_html.write(
-        f"{a.out}/review.html", os.path.basename(os.path.normpath(a.out)),
-        os.path.relpath(a.ortho or f"{a.out}/ortho.jpg", a.out), cls.shape, m["lo"], float(m["res"]), m["origin"],
-        json.load(open(VECTORS))["features"], json.load(open(a.review)) if a.review and os.path.exists(a.review) else None,
-        sorted(os.path.basename(f) for f in glob.glob(f"{a.out}/sample_*.jpg")),
+
+    def sample_xy(f):  # ego position of sample_<k>.jpg (k = row index), for showing the camera views near an element
+        k = int(os.path.basename(f)[7:-4])
+        return [round(float(v), 2) for v in np.array(rows[k]["T_map_base"])[:2, 3]] if k < len(rows) else None
+
+    features = json.load(open(VECTORS))["features"]
+    review = json.load(open(a.review)) if a.review and os.path.exists(a.review) else None
+    scene_id = os.path.basename(os.path.normpath(a.out))
+    rels = review_html.elements(features)
+    queue, reasons = review_html.write(
+        f"{a.out}/review.html", scene_id, os.path.relpath(a.ortho or f"{a.out}/ortho.jpg", a.out), cls.shape,
+        m["lo"], float(m["res"]), m["origin"], rels, review,
+        [dict(file=os.path.basename(f), xy=sample_xy(f)) for f in sorted(glob.glob(f"{a.out}/sample_*.jpg"))],
+        a.review,
     )  # fmt: skip
+
+    # evidence pack (check/) for the reviewer: the queue minus what a review already decided; once a scene has been
+    # reviewed, no new spot check / map tiles are drawn (they would change with every fix)
+    reviewed = bool(review and "checked" in review)
+    others = [json.load(open(f)) for f in a.others if os.path.exists(f) and f != a.review]
+    items = [
+        dict(feature=features[rels[i]["src"]], group=rels[i]["group"], at=rels[i]["at"], reason=reasons[i])
+        for i in queue
+        if not any(review_html.decided(r, rels[i]["kind"], rels[i]["at"]) for r in [review] + others)
+        and not (reviewed and reasons[i] != "low confidence")
+    ]
+    siblings = sorted(
+        os.path.dirname(f) for f in glob.glob(f"{os.path.dirname(os.path.normpath(a.dataset))}/*/frames.jsonl")
+    )
+    sc = evidence.Scene(a.dataset, a.ortho or f"{a.out}/ortho.jpg", siblings)
+    shown = [f for f in features if review_html.GROUP.get(f["properties"]["kind"]) in evidence.COLOR]
+    tiles = [] if reviewed else evidence.map_tiles(sc, scene_id)
+    evidence.write_pack(a.out, sc, shown, items, tiles, review_html.GROUP)
     print(f"review sheets -> {a.out} ({len(els)} numbered elements, review.html)")
 
 

@@ -18,6 +18,9 @@ usage: ./autolabel COMMAND [CONFIG.yaml] [--map PCD] [--logs GLOB ...] [--tf-sta
            (part of run unless debug: false in the config or --no-debug)
   qa       repeatability: scenes seen by two drives labelled from each drive alone, compared (no HD map)
   status   what is done / failed
+  review   scenes whose evidence pack (debug/<scene>/check) awaits a reviewer; with --scene ID --decisions FILE:
+           apply the reviewer's decisions to review/<scene>.json (docs/AGENT_REVIEW.md)
+  signoff  --signoff FILE: record the person's acceptance saved by debug/audit.html (rejected scenes leave the data)
   prune    delete undistorted frames neither the dataset nor labelling uses (automatic in run with prune_frames: true)
 Outputs (one root, config `output`, default output/<name>/):
   dataset/   training data only (docs/DATASET.md)      debug/   images, PCDs, logs, QA (can be deleted / disabled)
@@ -473,9 +476,10 @@ def label_owners(area, scenes):
 
 def marking_args(area) -> list:
     """vectorize.py options from the config `markings` (regional conventions)."""
-    mk, st = area.cfg["markings"], area.cfg["markings"]["stop_line"]
+    mk, st, fr = area.cfg["markings"], area.cfg["markings"]["stop_line"], area.cfg["markings"]["fragments"]
     return ["--line-width", mk["line_width"], "--stop-width", st["min_width"], "--stop-length", st["min_length"],
-            "--stop-cos", st["max_cos"]]  # fmt: skip
+            "--stop-cos", st["max_cos"], "--frag-conf", fr["min_confidence"], "--frag-length", fr["short_length"],
+            "--frag-views", fr["short_min_views"]]  # fmt: skip
 
 
 def label(area, s, force):
@@ -628,9 +632,11 @@ def debug(area, s, force):
             D,
             "--review",
             area.review_file(s["id"]),
+            "--others",
+            *area.reviews(),
         ],
         [f"{D}/review.html"],
-        [f"{ds}/scene.json"] + ([area.review_file(s["id"])] if os.path.exists(area.review_file(s["id"])) else []),
+        [f"{ds}/scene.json"] + area.reviews(),
         gpu=True,
         force=force,
     )
@@ -834,6 +840,7 @@ def prune(area, d, force=False):
 
 def do_audit(area):
     """debug/audit.json|html: scenes ranked by risk of the automatic checks + a random sample (hdlabel/audit.py)."""
+    from hdlabel.agent_review import summary
     from hdlabel.audit import audit, scene_terms, write_html
 
     rows = []
@@ -841,17 +848,57 @@ def do_audit(area):
         sid = s["id"]
         vec = f"{area.scene_dir(area.owners.get(sid, sid))}/vectors/vectors.geojson"
         if os.path.exists(f"{area.ds_dir(sid)}/scene.json") and os.path.exists(vec):
-            rows.append(
-                dict(scene=sid, terms=scene_terms(area.ds_dir(sid), area.dbg_dir(sid), vec, f"{area.dbg}/qa/{sid}"))
-            )
+            rf = area.review_file(sid)
+            rv = summary(json.load(open(rf))) if os.path.exists(rf) else None
+            sc = json.load(open(f"{area.ds_dir(sid)}/scene.json"))
+            terms = scene_terms(area.ds_dir(sid), area.dbg_dir(sid), vec, f"{area.dbg}/qa/{sid}", rv)
+            rows.append(dict(scene=sid, terms=terms, review=rv, samples=sc["samples"], qa_ok=sc["qa_ok"]))
     if not rows:
         return
     res = audit(rows, **area.cfg.get("audit", {}))
     json.dump(res, open(f"{area.dbg}/audit.json", "w"), indent=1)
-    write_html(res, f"{area.dbg}/audit.html", lambda sid: f"scenes/{sid}")
+    write_html(res, f"{area.dbg}/audit.html", lambda sid: f"scenes/{sid}", area.name)
     top = ", ".join(f"{x['scene']} {x['risk']}" for x in res["scenes"][:3])
-    print(f"  audit: {'accept' if res['accept'] else 'REVIEW ' + str(len(res['over_max_risk'])) + ' scenes'}; riskiest: {top}; "
+    state = (
+        "ready to accept"
+        if res["accept"]
+        else (
+            f"not ready ({len(res['not_reviewed'])} not reviewed, {len(res['rejected'])} rejected, "
+            f"{len(res['over_max_risk'])} over max risk)"
+        )
+    )
+    print(f"  audit: {state}; riskiest: {top}; "
           f"random sample: {res['random_sample']} -> {area.dbg}/audit.html")  # fmt: skip
+
+
+def review(area, scenes, decisions, partial):
+    """without --decisions: the scenes whose evidence pack (debug/scenes/<scene>/check) still has items to decide;
+    with --scene ID --decisions FILE: apply the decisions to review/<scene>.json (hdlabel/agent_review.py)."""
+    from hdlabel.agent_review import apply
+
+    if decisions:
+        if not scenes or len(scenes) != 1:
+            raise SystemExit("review --decisions needs exactly one --scene")
+        sid = scenes[0]
+        rv = apply(f"{area.dbg_dir(sid)}/check", json.load(open(decisions)), area.review_file(sid),
+                   f"{area.dbg_dir(sid)}/reviewed", partial)  # fmt: skip
+        print(f"{sid}: {rv['verdict']} -> {area.review_file(sid)}; ./autolabel run applies it")
+        return
+    pending = 0
+    for s in area.scenes():
+        sid = s["id"]
+        if scenes and sid not in scenes:
+            continue
+        f = f"{area.dbg_dir(sid)}/check/items.json"
+        if not os.path.exists(f):
+            print(f"  {sid}: no evidence pack yet (./autolabel debug)")
+            continue
+        pk = json.load(open(f))
+        done = os.path.exists(area.review_file(sid)) and "checked" in json.load(open(area.review_file(sid)))
+        if pk["items"] or pk["tiles"] or not done:
+            pending += 1
+            print(f"  {sid}: {len(pk['items'])} items, {len(pk['tiles'])} tiles -> {os.path.dirname(f)}")
+    print(f"{pending} scenes to review (docs/AGENT_REVIEW.md)" if pending else "every scene is reviewed")
 
 
 def status(area):
@@ -868,7 +915,15 @@ def status(area):
         )
     if os.path.exists(f"{area.dbg}/audit.json"):
         r = json.load(open(f"{area.dbg}/audit.json"))
-        print(f"  audit: {'accept' if r['accept'] else 'REVIEW ' + str(r['over_max_risk'])}; riskiest: "
+        st = (
+            "ready to accept"
+            if r["accept"]
+            else (
+                f"not ready: not reviewed {len(r.get('not_reviewed', []))}, rejected {len(r.get('rejected', []))}, "
+                f"over max risk {len(r['over_max_risk'])}"
+            )
+        )
+        print(f"  acceptance: {st}; riskiest: "
               + ", ".join(f"{x['scene']} {x['risk']}" for x in r["scenes"][:3]) + f" ({area.dbg}/audit.html)")  # fmt: skip
 
 
@@ -889,6 +944,8 @@ def main():
             "status",
             "prune",
             "validate",
+            "review",
+            "signoff",
         ],
     )
     p.add_argument("config", nargs="?", help="project config (overrides configs/default.yaml); validate: dataset.json")
@@ -910,6 +967,9 @@ def main():
         help="parallel items (default: config jobs.cpu or 4); GPU steps are limited to jobs.gpu at once",
     )
     p.add_argument("--out", help="validate: write the report (json) here")
+    p.add_argument("--decisions", help="review: decisions on the scene's evidence pack (docs/AGENT_REVIEW.md)")
+    p.add_argument("--partial", action="store_true", help="review: apply although some items have no decision")
+    p.add_argument("--signoff", help="signoff: the json saved by debug/audit.html")
     a = p.parse_args()
     if a.command == "validate":
         from hdlabel.validate import main as validate
@@ -922,6 +982,17 @@ def main():
     cmd = a.command
     if cmd == "status":
         return status(area)
+    if cmd == "review":
+        return review(area, a.scene, a.decisions, a.partial)
+    if cmd == "signoff":
+        from hdlabel.agent_review import signoff
+
+        if not a.signoff:
+            raise SystemExit("signoff: give --signoff FILE (saved by debug/audit.html)")
+        rej = signoff(json.load(open(a.signoff)), area.review_file, f"{area.out}/signoff.json")
+        print(f"sign-off recorded -> {area.out}/signoff.json; rejected scenes: {rej or 'none'}"
+              + ("; run ./autolabel run to drop their samples" if rej else ""))  # fmt: skip
+        return
     if not area.map:
         raise SystemExit("no point cloud map: set pointcloud_map in the config or give --map")
     if not area.drives:
