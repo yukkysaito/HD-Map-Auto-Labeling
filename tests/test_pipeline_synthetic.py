@@ -161,3 +161,28 @@ def test_write_atomic_leaves_no_partial_file(tmp_path, monkeypatch):
     with pytest.raises(OSError):
         common.write_atomic(str(tmp_path / "1.jpg"), b"abc")
     assert not (tmp_path / "1.jpg").exists()
+
+
+def test_retry_file_reopens_after_read_error(tmp_path):
+    """a read that fails once (network mount) is retried from the same offset after reopening"""
+    from hdlabel import common
+
+    p = tmp_path / "x.bin"
+    p.write_bytes(bytes(range(100)))
+    f = common.RetryFile(str(p), wait=0)
+    f.seek(10)
+    real, calls = f.f, {"n": 0}
+
+    class Flaky:
+        def seek(self, *a):
+            return real.seek(*a)
+
+        def read(self, n):
+            calls["n"] += 1
+            raise OSError(5, "Input/output error")
+
+        def close(self):
+            real.close()
+
+    f.f = Flaky()
+    assert f.read(5) == bytes(range(10, 15)) and f.retries == 1 and f.tell() == 15

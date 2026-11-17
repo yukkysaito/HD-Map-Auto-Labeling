@@ -36,7 +36,7 @@ from mcap_ros2.decoder import DecoderFactory
 from scipy.spatial.transform import Rotation as R
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
-from hdlabel.common import bag_ranges, link_file, load_yaml, stamps_of, tf_to_base, write_atomic
+from hdlabel.common import RetryFile, bag_ranges, link_file, load_yaml, stamps_of, tf_to_base, write_atomic
 
 
 def main(argv=None):
@@ -121,7 +121,7 @@ def main(argv=None):
     have, errors, unindexed = set(), [], set()
     for b in a.bags:
         try:
-            with open(b, "rb") as f:
+            with RetryFile(b) as f:
                 sm = make_reader(f).get_summary()
             if sm is None:
                 raise ValueError("no summary section")
@@ -156,7 +156,7 @@ def main(argv=None):
         def messages(b):
             """messages of one bag; a broken bag (truncated, corrupt chunk) is used up to the error, which is recorded."""
             try:
-                with open(b, "rb") as f:
+                with RetryFile(b) as f:
                     if b in unindexed:  # no index: stream from the start (up to the break)
                         for sc, ch, m, d in NonSeekingReader(
                             f, decoder_factories=[DecoderFactory()]

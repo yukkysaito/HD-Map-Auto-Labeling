@@ -6,6 +6,7 @@ import glob
 import json
 import os
 import shutil
+import time
 
 import cv2
 import numpy as np
@@ -66,6 +67,53 @@ def save_png(path: str, im: np.ndarray) -> None:
     if not ok:
         raise OSError(f"cannot encode {path}")
     write_atomic(path, buf.tobytes())
+
+
+class RetryFile:
+    """read-only file that reopens and retries a failed read at the same offset. Network mounts (SMB through gvfs)
+    fail now and then with EIO in the middle of a large file and read fine again after reopening."""
+
+    def __init__(self, path: str, tries: int = 5, wait: float = 0.5):
+        self.path, self.tries, self.wait = path, tries, wait
+        self.f, self.pos, self.retries = open(path, "rb"), 0, 0
+
+    def seekable(self) -> bool:
+        return True
+
+    def readable(self) -> bool:
+        return True
+
+    def tell(self) -> int:
+        return self.pos
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        self.pos = self.f.seek(offset, whence)
+        return self.pos
+
+    def read(self, n: int = -1) -> bytes:
+        for k in range(self.tries):
+            try:
+                self.f.seek(self.pos)
+                d = self.f.read(n)
+                self.pos += len(d)
+                return d
+            except OSError:
+                if k == self.tries - 1:
+                    raise
+                self.retries += 1
+                time.sleep(self.wait * (k + 1))
+                self.f.close()
+                self.f = open(self.path, "rb")
+        return b""
+
+    def close(self) -> None:
+        self.f.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
 
 
 def link_file(src: str, dst: str) -> None:
@@ -166,7 +214,7 @@ def load_tf_static(path: str, base: str = "base_link", topic: str = "/tf_static"
         from mcap.reader import make_reader
         from mcap_ros2.decoder import DecoderFactory
 
-        with open(path, "rb") as f:
+        with RetryFile(path) as f:
             for _, _, _, m in make_reader(f, decoder_factories=[DecoderFactory()]).iter_decoded_messages(
                 topics=[topic]
             ):
@@ -202,7 +250,7 @@ def bag_ranges(bags: list[str]) -> dict:
     out = {}
     for b in bags:
         try:
-            with open(b, "rb") as f:
+            with RetryFile(b) as f:
                 st = make_reader(f).get_summary().statistics
             out[os.path.basename(b)] = [int(st.message_start_time), int(st.message_end_time)]
         except Exception as e:  # broken / unindexed file: no range
