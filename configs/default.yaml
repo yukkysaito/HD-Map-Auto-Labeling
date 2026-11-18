@@ -56,6 +56,13 @@ markings:
                               # curb / unobserved cells only (planters behind a sidewalk / hedge, wall bases, sidewalk
                               # pieces), not hit by sideways rays from the trajectories (< min_first_edge), small loops,
                               # wavy lines (mean turning > max_wavy_deg_per_m), short pieces at the edge of the view
+  marking_gate: {enabled: false, tol_m: 0.04, min_on_level: 0.7, step_m: 0.07, ref_m: 3.0, rules: null}
+                              # vectorize variant marking_level (hdlabel/markingcheck.py): lane lines, stop lines, marking
+                              # areas and arrows off the road level become kind marking_candidate (props.candidate_of,
+                              # marking_check = rules: off_level, raised, cut_off; null: all). LiDAR ground height of the
+                              # element's cells vs a plane fitted to the road within ref_m (driven road first): less than
+                              # min_on_level within tol_m and median beyond tol_m, median beyond step_m, or a step > step_m
+                              # on the way from the driven road. Cells without LiDAR / near crosswalks are not judged
 
 # ---- processing
 segmentation:

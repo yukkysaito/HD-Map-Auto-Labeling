@@ -517,6 +517,17 @@ def curb_args(area, gts) -> list:
         + (["--curb-rules", *cf["rules"]] if cf.get("rules") else [])  # fmt: skip
 
 
+def marking_gate_args(area, gts) -> list:
+    """vectorize.py marking gate options from the config `markings.marking_gate` (none when it is off: unchanged);
+    the trajectories (--gt) only when the curb filter does not pass them already."""
+    mg = area.cfg["markings"].get("marking_gate") or {}
+    if not mg.get("enabled"):
+        return []
+    gt = [] if (area.cfg["markings"].get("curb_filter") or {}).get("enabled") else ["--gt", *gts]
+    return ["--marking-gate", *gt, "--mark-tol", mg["tol_m"], "--mark-min-level", mg["min_on_level"], "--mark-step",
+            mg["step_m"], "--mark-ref", mg["ref_m"]] + (["--mark-rules", *mg["rules"]] if mg.get("rules") else [])  # fmt: skip
+
+
 def fixes_file(area) -> str:
     """work/fixes.json: the fixes (deletions / changes) of all review files in one file, rewritten only when they
     change - the input of vectorize, so a new 'ok' decision does not redo every scene's vectors."""
@@ -614,6 +625,7 @@ def label(area, s, force):
             fixes_file(area),
             *marking_args(area),
             *curb_args(area, gts),
+            *marking_gate_args(area, gts),
             *dbg(),
         ],
         [f"{S}/vectors/vectors.geojson"],
@@ -791,6 +803,7 @@ def qa(area, s, force):
                 f"{Q}/vectors_{d}",
                 *marking_args(area),
                 *curb_args(area, [f"{area.data(d)}/gt.npy"]),
+                *marking_gate_args(area, [f"{area.data(d)}/gt.npy"]),
             ],
             [f"{Q}/vectors_{d}/vectors.geojson"],
             [f"{Q}/labels_{d}/ground_map.npz"],

@@ -95,6 +95,7 @@ the deck on a bridge; levels never mix.
 | `stop_line` | `points` line | `width` (m; `vectors.geojson` also has `length`). A wide (~0.45 m) line across the lanes; before format 3 these were `lane_line` |
 | `curb` | `points` line | |
 | `curb_candidate` | `points` line | a curb line the curb filter (`markings.curb_filter`, active tool variant) judged not to be a road kerb; `curb_check` = the rules it failed. Not a boundary for training (the loader skips it); the raster keeps its cells as curb |
+| `marking_candidate` | as its kind | a lane line / stop line / marking area / arrow the marking gate (`markings.marking_gate`, vectorize variant `marking_level`) found off the road level by the LiDAR ground height (ledge, raised sidewalk, plaza behind a kerb step); `candidate_of` = its kind, `marking_check` = the failed rules, `marking_level` = the measurements. Not a marking for training (the loader skips it) |
 | `road_boundary` | `points` line | `observed`: true = real boundary (curb / sidewalk / off-road outside), false = edge of the observed area (**do not learn it as a boundary**) |
 | `crosswalk` | `rings` polygon | `type` (set by review, e.g. `red_white`) |
 | `marking_area` | `rings` polygon | thick stop lines, text, zebra zones etc. `type` (set by review: zebra / stop_line / text / ...) |

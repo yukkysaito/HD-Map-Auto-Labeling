@@ -199,6 +199,15 @@ tools:
             rules:
             - loop
             - wavy
+      marking_level:
+        markings:
+          curb_filter:
+            enabled: true
+            rules:
+            - loop
+            - wavy
+          marking_gate:
+            enabled: true
     active: curb_shape
     history:
     - date: '2026-11-16'

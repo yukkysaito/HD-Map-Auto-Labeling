@@ -19,6 +19,11 @@ Elements (3D, map frame; z from the map surface):
                               hdlabel/curbcheck.py (not on the edge of the road reachable from the trajectories, not
                               the first edge sideways from them, small loop, wavy, short at the edge of the view);
                               props.curb_check = the failed rules. Not a curb for training / the benchmark
+  marking_candidate (geometry of its kind) with --marking-gate (and --gt trajectories): a lane_line / stop_line /
+                              marking_area / arrow that does not lie on the level of the road reachable from the
+                              trajectories by hdlabel/markingcheck.py (ledge, rail base, raised sidewalk, plaza behind a
+                              kerb step); props.candidate_of = its kind, props.marking_check = the failed rules,
+                              props.marking_level = the measurements. Not a marking for training / the benchmark
   drivable_area   Polygon     road + marking + crosswalk + manhole (holes = islands), observed cells only
   road_boundary   LineString  outline of the drivable area, split into runs; props.observed = the outside is an observed
                               non-drivable class (curb, sidewalk, off-road) -> a real boundary; false -> edge of the observed
@@ -109,6 +114,19 @@ def main(argv=None):
     )
     p.add_argument("--curb-wavy", type=float, default=30.0, help="--curb-filter: max mean turning (deg / m)")
     p.add_argument("--curb-rules", nargs="*", help="--curb-filter: apply only these rules (default: all)")
+    p.add_argument(
+        "--marking-gate",
+        action="store_true",
+        help="markings off the road level (hdlabel/markingcheck.py: LiDAR ground height vs the local plane of the road "
+        "reachable from the trajectories, height step to it) become kind marking_candidate",
+    )
+    p.add_argument("--mark-tol", type=float, default=0.04, help="--marking-gate: max |height - road plane| (m)")
+    p.add_argument(
+        "--mark-min-level", type=float, default=0.7, help="--marking-gate: min share of known cells on the road level"
+    )
+    p.add_argument("--mark-step", type=float, default=0.07, help="--marking-gate: height step to the road (m)")
+    p.add_argument("--mark-ref", type=float, default=3.0, help="--marking-gate: road cells within this distance (m)")
+    p.add_argument("--mark-rules", nargs="*", help="--marking-gate: apply only these rules (default: all)")
     p.add_argument(
         "--fixes",
         nargs="*",
@@ -589,7 +607,8 @@ def main(argv=None):
     KIND_CLASS = dict(lane_line="marking", stop_line="marking", marking_area="marking", arrow="marking",
                       crosswalk="crosswalk", curb="curb")  # fmt: skip
 
-    def element_cells(f):
+    def element_ij(f):
+        """label grid cells (row, col) of an element: along a line every res, inside a polygon / arrow outline."""
         g, pr = f["geometry"], f["properties"]
         if g["type"] == "LineString" and pr["kind"] != "arrow":
             P = np.asarray(g["coordinates"], float)[:, :2] - origin[:2]
@@ -606,7 +625,10 @@ def main(argv=None):
             win = np.zeros(q1 - q0, np.uint8)
             cv2.fillPoly(win, [np.round((q - lo) / res - q0 - 0.5).astype(np.int32)[:, ::-1] for q in Q], 1)
             ij = np.argwhere(win > 0) + q0
-        ij = ij[np.all((ij >= 0) & (ij < cls.shape), 1)]
+        return ij[np.all((ij >= 0) & (ij < cls.shape), 1)]
+
+    def element_cells(f):
+        ij = element_ij(f)
         flat = ij[:, 0] * cls.shape[1] + ij[:, 1]
         k = np.minimum(np.searchsorted(CELLS, flat), len(CELLS) - 1)
         return k[CELLS[k] == flat]
@@ -637,10 +659,8 @@ def main(argv=None):
     dropped_fragments = n0 - len(feats)
 
     # ---- curb filter (--curb-filter, hdlabel/curbcheck.py): curbs that are not road kerbs -> curb_candidate
-    curb_filter = None
-    if a.curb_filter:
-        from hdlabel.curbcheck import check_curbs
-
+    def trajectories():
+        """grid-local xy runs of the --gt trajectories on this road level (gaps > 2 m split them)."""
         trajs = []
         for g in a.gt:
             P = np.load(g)[:, 1:4] - origin
@@ -651,6 +671,13 @@ def main(argv=None):
                     q = P[run, :2]
                     cut = np.flatnonzero(np.linalg.norm(np.diff(q, axis=0), axis=1) > 2.0) + 1
                     trajs += [t for t in np.split(q, cut) if len(t) >= 2]
+        return trajs
+
+    curb_filter = None
+    if a.curb_filter:
+        from hdlabel.curbcheck import check_curbs
+
+        trajs = trajectories()
         k = max(1, int(round(sres / res)))
         surf = np.repeat(np.repeat(m["height_w"] > 0, k, 0), k, 1)[: cls.shape[0], : cls.shape[1]]
         surf = np.pad(surf, [(0, cls.shape[0] - surf.shape[0]), (0, cls.shape[1] - surf.shape[1])])
@@ -672,6 +699,29 @@ def main(argv=None):
                     rules[r] = rules.get(r, 0) + 1
         curb_filter = dict(st, curbs=len(idx), candidates=sum(bool(w) for w in why), rules=rules)
 
+    # ---- marking gate (--marking-gate, hdlabel/markingcheck.py): markings off the road level -> marking_candidate
+    marking_gate = None
+    if a.marking_gate:
+        from hdlabel.markingcheck import check_markings, upsample
+
+        Hc = upsample(H, max(1, int(round(sres / res))), cls.shape)
+        idx = [i for i, f in enumerate(feats) if f["properties"]["kind"] in ("lane_line", "stop_line", "marking_area",
+               "arrow") and not f["properties"].get("reviewed")]  # fmt: skip
+        params = dict(tol=a.mark_tol, min_on_level=a.mark_min_level, step_m=a.mark_step, ref_m=a.mark_ref)
+        why, mst, st = check_markings([element_ij(feats[i]) for i in idx], cls, C, lo, res, Hc, trajectories(), params)
+        if a.mark_rules:  # only these rules demote a marking (the others are measured but not applied)
+            why = [[r for r in w if r in a.mark_rules] for w in why]
+        rules, kinds = {}, {}
+        for i, w, ms in zip(idx, why, mst):
+            pr = feats[i]["properties"]
+            pr["marking_level"] = ms
+            if w:
+                kinds[pr["kind"]] = kinds.get(pr["kind"], 0) + 1
+                pr.update(candidate_of=pr["kind"], kind="marking_candidate", marking_check=w)
+                for r in w:
+                    rules[r] = rules.get(r, 0) + 1
+        marking_gate = dict(st, markings=len(idx), candidates=sum(bool(w) for w in why), kinds=kinds, rules=rules)
+
     # ---- outputs
     crs = dict(type="name", properties=dict(name="map frame of the label map (Autoware map, metres)"))
     json.dump(dict(type="FeatureCollection", crs=crs, features=feats), open(f"{a.out}/vectors.geojson", "w"))
@@ -686,8 +736,14 @@ def main(argv=None):
         s = summ.setdefault(k, dict(n=0, length_m=0.0))
         s["n"] += 1
         s["length_m"] = round(s["length_m"] + pr.get("length", 0.0), 1)
-    filter_keys = ("curb_filter", "gt", "curb_adjacent", "curb_min_adjacent", "curb_min_first", "curb_wavy")
-    params = {k: v for k, v in vars(a).items() if a.curb_filter or k not in filter_keys}  # default: as before
+    hide = (
+        set() if a.curb_filter else {"curb_filter", "curb_adjacent", "curb_min_adjacent", "curb_min_first", "curb_wavy"}
+    )
+    if not a.marking_gate:
+        hide |= {"marking_gate", "mark_tol", "mark_min_level", "mark_step", "mark_ref", "mark_rules"}
+    if not (a.curb_filter or a.marking_gate):
+        hide.add("gt")
+    params = {k: v for k, v in vars(a).items() if k not in hide}  # default: as before
     info = dict(
         source=os.path.abspath(a.labels),
         params=params,
@@ -698,6 +754,8 @@ def main(argv=None):
     )
     if curb_filter is not None:
         info["curb_filter"] = curb_filter
+    if marking_gate is not None:
+        info["marking_gate"] = marking_gate
     json.dump(info, open(f"{a.out}/vectors.json", "w"), indent=1)
     print(json.dumps(summ, indent=1))
     print("elements: " + ", ".join(f"{k} {v['n'] if isinstance(v, dict) and 'n' in v else v}" for k, v in summ.items()))
@@ -720,6 +778,7 @@ def main(argv=None):
             "lane_line/short": (0, 160, 255),
             "curb": (255, 80, 0),
             "curb_candidate": (160, 0, 255),
+            "marking_candidate": (160, 0, 255),
             "road_boundary/observed": (0, 0, 255),
             "road_boundary/unknown": (120, 120, 120),
             "arrow": (0, 255, 0),
@@ -728,9 +787,8 @@ def main(argv=None):
         for f in feats:
             pr, g = f["properties"], f["geometry"]
             if g["type"] == "Polygon":
-                col = {"drivable_area": (0, 120, 0), "crosswalk": (255, 0, 255), "marking_area": (0, 200, 255)}[
-                    pr["kind"]
-                ]
+                col = {"drivable_area": (0, 120, 0), "crosswalk": (255, 0, 255), "marking_area": (0, 200, 255),
+                       "marking_candidate": (160, 0, 255)}[pr["kind"]]  # fmt: skip
                 if pr["kind"] == "drivable_area":
                     continue
                 cv2.polylines(img, [ipx(r) for r in g["coordinates"]], True, col, 1, cv2.LINE_AA)
@@ -740,8 +798,10 @@ def main(argv=None):
                     + (f"/{pr['style']}" if "style" in pr else "")
                     + ("" if "observed" not in pr else ("/observed" if pr["observed"] else "/unknown"))
                 )
+                if k.startswith("marking_candidate"):
+                    k = "marking_candidate"
                 cv2.polylines(img, [ipx(g["coordinates"])], False, COL[k], 1, cv2.LINE_AA)
-                if k == "arrow":
+                if k == "arrow" or "outlines" in pr:
                     cv2.polylines(img, [ipx(o) for o in pr["outlines"]], True, COL[k], 1, cv2.LINE_AA)
         cv2.imwrite(f"{a.debug}/vectors.jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 88])
 
