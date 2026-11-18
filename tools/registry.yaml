@@ -208,7 +208,7 @@ tools:
             - wavy
           marking_gate:
             enabled: true
-    active: curb_shape
+    active: marking_level
     history:
     - date: '2026-11-16'
       active: curb_shape
@@ -260,6 +260,15 @@ tools:
       previous: default
       by: agent:demo
       note: rollback
+    - date: '2026-11-18'
+      active: marking_level
+      previous: curb_shape
+      by: agent
+      note: Height and road-level gate for marking elements (LiDAR support check)
+      evidence:
+        experiment: evolve-vectorize-20261118-233723
+        gain: 0.05
+        target: marking.fp
   geom_check:
     purpose: verification without cameras - curbs vs LiDAR height steps, vector height vs LiDAR ground
     stage: verify
