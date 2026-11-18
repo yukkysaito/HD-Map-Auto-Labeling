@@ -166,6 +166,7 @@ def experiment_cmd(area, a):
     experiment.run(area, a.id, os.path.abspath(a.code) if a.code else ROOT, drive_level=bool(drive_writes))
     cand = experiment.measure(area, a.id)
     g = bench.gate(area.name, base, cand, a.target)
+    g = experiment.spec_gate(g, experiment.features(f"{experiment.exp_root(area, a.id)}/work", scenes))
     res = dict(id=a.id, tool=tool, variant=var, overlay=overlay, code=a.code, base=base, cand=cand, gate=g)
     json.dump(res, open(f"{experiment.exp_root(area, a.id)}/result.json", "w"), indent=1)
     kb = knowledge()

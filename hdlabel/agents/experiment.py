@@ -133,6 +133,20 @@ def curb_profiles(map_path: str, work: str, scenes: list[str]) -> list[float]:
     return out
 
 
+def spec_gate(g: dict, feats: list[dict]) -> dict:
+    """the benchmark gate plus spec conformance: a candidate whose vectors do not follow spec/labels.yaml (a kind or
+    geometry the spec does not define, a missing attribute) is not adopted - the spec is the person's, and data that
+    breaks it fails `./autolabel validate`. Attributes the spec does not name are warnings and do not block."""
+    from hdlabel import spec
+
+    errs, _ = spec.conform(feats)
+    if not errs:
+        return g
+    more = f" (+{len(errs) - 3} more)" if len(errs) > 3 else ""
+    return dict(g, adopt=False, fails=[*g["fails"], f"output breaks spec/labels.yaml: {'; '.join(errs[:3])}{more}"],
+                spec_errors=len(errs))  # fmt: skip
+
+
 def measure(area, exp_id: str) -> dict:
     """benchmark metrics of an experiment (all reference elements and the holdout split) -> experiment dir."""
     from hdlabel.agents import bench

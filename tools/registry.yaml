@@ -208,7 +208,7 @@ tools:
             - wavy
           marking_gate:
             enabled: true
-    active: marking_level
+    active: curb_shape
     history:
     - date: '2026-11-16'
       active: curb_shape
@@ -269,6 +269,11 @@ tools:
         experiment: evolve-vectorize-20261118-233723
         gain: 0.05
         target: marking.fp
+    - date: '2026-11-19'
+      active: curb_shape
+      previous: marking_level
+      by: agent
+      note: rollback
   geom_check:
     purpose: verification without cameras - curbs vs LiDAR height steps, vector height vs LiDAR ground
     stage: verify

@@ -78,7 +78,7 @@ under the old rules: rebuild them (`bench build`) or review them (`bench review`
 `tools/registry.yaml` describes each tool (purpose, interface, algorithm / model, good / bad conditions, cost,
 license, dependencies) and its variants (config overlays). An experiment runs the candidate in
 `output/<name>/experiments/<id>/` (drive data linked read-only, scene data copied, unchanged steps skipped by their
-stamps), measures it with the main checkout's evaluator and applies the gate; `--adopt` makes the variant active and
+stamps), measures it with the main checkout's evaluator and applies the gate (plus: its vectors must follow `spec/labels.yaml`, or it is not adopted); `--adopt` makes the variant active and
 records the evidence. The next `run` redoes exactly the affected steps (stamps: arguments + code hash).
 
 ## Orchestrator (`./autolabel evolve <config>`)

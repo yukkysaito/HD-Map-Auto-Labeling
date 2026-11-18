@@ -233,3 +233,13 @@ def test_bench_person_review(tmp_path, monkeypatch):
     ref = json.load(open(d / "reference.json"))
     assert [e["ref"] for e in ref["items"]] == ["wrong", "ok"] and "person:test" in ref["judges"]
     assert bench.check_lock("t")["locked_by"] == "person:test"
+
+
+def test_spec_gate_blocks_output_outside_the_spec():
+    from hdlabel.agents.experiment import spec_gate
+
+    g = dict(adopt=True, fails=[], target="marking.fp", gain=0.05, rows=[])
+    line = {"type": "LineString", "coordinates": [[0, 0, 0], [1, 0, 0]]}
+    bad = spec_gate(g, [{"type": "Feature", "geometry": line, "properties": {"kind": "made_up_kind"}}])
+    assert not bad["adopt"] and "spec/labels.yaml" in bad["fails"][-1] and bad["spec_errors"] == 1
+    assert spec_gate(g, []) == g  # conforming output: the benchmark decision stands
