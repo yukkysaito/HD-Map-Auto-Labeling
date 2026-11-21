@@ -148,3 +148,18 @@ A small BEV network checks that
 
 Network: ResNet18 features sampled at the projection of each BEV cell (flat-ground assumption), trained on 0.8 m
 cells. Val is compared with "the most frequent train class per cell". Results go to `output/<name>/debug/eval/`.
+
+## Reference model (`hdlabel/bevnet`)
+A camera-only BEV segmentation network that shows what the dataset supports (not tuned for deployment):
+- input: the current frame of every camera (704 x 448); output: classes on a 0.1 m grid, 60 m ahead, 20 m behind,
+  25.6 m to each side
+- frozen DINOv2 + ResNet18 image features, lifted to a 0.4 m BEV grid by sampling every cell at several heights
+  (SimpleBEV), a BEV U-Net, and a 0.1 m detail head on stride-2 image features
+- trained on the labelled cells only; output channel 0 lets the model abstain where cells are never labelled.
+
+```
+python -m hdlabel.bevnet.train output/<name>/dataset/dataset.json --tag _mine   # ~70 min on a 12 GB GPU
+python -m hdlabel.bevnet.video output/<name>/debug/eval/bevnet_mine.pt          # videos of the val scenes
+```
+Scores (`debug/eval/bevnet<tag>.json`) are at the label resolution: IoU per class and a boundary F-score (0.2 m
+tolerance) for markings, crosswalks and curbs.

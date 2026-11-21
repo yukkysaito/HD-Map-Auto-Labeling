@@ -2,6 +2,7 @@
 
 Each item = one sample (qa.ok only) of a scene of output/<name>/dataset/:
   images      float [T, C, 3, H, W]  T frames (current + history, export's history spacing), C cameras, RGB 0..1, resized
+                                     (uint8 0..255 with uint8=True)
   cam_mask    bool  [C]              camera present in this drive (missing ones are zeros)
   K           float [C, 3, 3]        intrinsics for the resized images
   T_base_cam  float [C, 4, 4]        camera -> base_link (official calibration)
@@ -63,8 +64,14 @@ class HDMapDataset(torch.utils.data.Dataset):
         max_vectors: int = 300,
         npts: int = 20,
         scenes: list[str] | None = None,
+        fast_decode: bool = False,
+        uint8: bool = False,
     ):
+        """fast_decode: JPEG decoding at 1/2, 1/4 or 1/8 scale (libjpeg DCT scaling) when the target size allows it -
+        several times faster for long histories (T x C images per item), slightly different resampling.
+        uint8: images as uint8 0..255 (4x less memory between loader workers; the model divides by 255)."""
         idx = json.load(open(dataset_json))
+        self.fast_decode, self.uint8 = fast_decode, uint8
         root = os.path.dirname(os.path.abspath(dataset_json))
         cams = cams or idx["cameras"]  # default: every camera of the dataset
         self.cams, self.T, self.size, self.max_v, self.npts = cams, history, image_size, max_vectors, npts
@@ -104,7 +111,7 @@ class HDMapDataset(torch.utils.data.Dataset):
         T_cur = np.array(r["T_map_base"])
         T_cur_inv = np.linalg.inv(T_cur)
         t0 = r["stamp"]
-        images = np.zeros((self.T, C, 3, H, W), np.float32)
+        images = np.zeros((self.T, C, 3, H, W), np.uint8 if self.uint8 else np.float32)
         Tcf = np.tile(np.eye(4), (self.T, C, 1, 1))
         fdt = np.zeros((self.T, C))
         K = np.tile(np.eye(3), (C, 1, 1))
@@ -119,10 +126,26 @@ class HDMapDataset(torch.utils.data.Dataset):
             w0, h0 = meta["size"]
             K[ci] = np.diag([W / w0, H / h0, 1.0]) @ np.array(meta["K"])
             Tbc[ci] = np.array(meta["T_base_cam"])
+            flag = cv2.IMREAD_COLOR
+            if self.fast_decode:
+                for s_, fl in (
+                    (8, cv2.IMREAD_REDUCED_COLOR_8),
+                    (4, cv2.IMREAD_REDUCED_COLOR_4),
+                    (2, cv2.IMREAD_REDUCED_COLOR_2),
+                ):
+                    if w0 // s_ >= W and h0 // s_ >= H:
+                        flag = fl
+                        break
+            done = {}  # a frame repeated in the history (vehicle stopped) is read once
             for k in range(self.T):
+                if ids[k] in done:
+                    images[k, ci] = images[done[ids[k]], ci]
+                else:
+                    img = cv2.imread(os.path.join(sc["dir"], sc["frames"][ids[k]]["image"]), flag)[..., ::-1]
+                    im = cv2.resize(img, (W, H), interpolation=cv2.INTER_AREA).transpose(2, 0, 1)
+                    images[k, ci] = im if self.uint8 else im / 255.0
+                    done[ids[k]] = k
                 f = sc["frames"][ids[k]]
-                img = cv2.imread(os.path.join(sc["dir"], f["image"]))[..., ::-1]
-                images[k, ci] = cv2.resize(img, (W, H), interpolation=cv2.INTER_AREA).transpose(2, 0, 1) / 255.0
                 Tcf[k, ci] = T_cur_inv @ np.array(f["T_map_base"])
                 fdt[k, ci] = (f["pose_stamp"] - t0) * 1e-9
         sm = self.scene_map(sid)
