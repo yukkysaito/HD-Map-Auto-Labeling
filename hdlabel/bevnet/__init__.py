@@ -6,5 +6,6 @@ model     BEVSegNet: frozen foundation ViT + CNN -> multi-height lifting -> BEV 
 losses    Lovasz-softmax
 metrics   prediction (with abstention), IoU and boundary F-score at the label resolution
 train     command line training / evaluation
+evaluate  scores of a trained model on a dataset (e.g. re-made labels)
 video     videos of a trained model on the val scenes
 """

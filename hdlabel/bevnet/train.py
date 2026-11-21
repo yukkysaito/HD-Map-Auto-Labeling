@@ -72,6 +72,7 @@ def main(argv=None):
     p.add_argument("--jitter", type=float, default=0.2, help="image brightness / contrast jitter")
     p.add_argument("--lovasz", type=float, default=0.5, help="weight of the Lovasz-softmax loss")
     p.add_argument("--known", type=float, default=0.5, help="weight of the abstention (cell unlabelled) loss")
+    p.add_argument("--edge", type=float, default=0.0, help="extra cross-entropy weight of cells near class boundaries")
     p.add_argument("--aux", type=float, default=0.5, help="weight of the loss on the context logits")
     p.add_argument("--tag", default="")
     a = p.parse_args(argv)
@@ -107,7 +108,7 @@ def main(argv=None):
         for x in dl:
             with torch.autocast("cuda", dtype=torch.bfloat16):
                 out = net(x)
-            loss = seg_loss(out, downsample(x["bev_cls"], net.f).to(dev), wts, a.lovasz, a.known)
+            loss = seg_loss(out, downsample(x["bev_cls"], net.f).to(dev), wts, a.lovasz, a.known, a.edge)
             if net.ctx_logits is not None and a.aux:
                 loss = loss + a.aux * seg_loss(net.ctx_logits, downsample(x["bev_cls"], net.fc).to(dev), wts)
             opt.zero_grad(set_to_none=True)

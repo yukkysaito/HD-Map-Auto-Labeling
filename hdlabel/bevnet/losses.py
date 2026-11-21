@@ -33,9 +33,24 @@ def class_weights(counts: torch.Tensor) -> torch.Tensor:
     return w / w[1:].mean()
 
 
-def seg_loss(out, y, weight, lovasz=0.0, known=0.0):
-    """cross entropy (+ Lovasz) over the classes; with known > 0 channel 0 learns "cell unlabelled" (BCE)."""
-    loss = F.cross_entropy(out.float(), y, weight=weight, ignore_index=0)
+def near_boundary(y, r: int):
+    """[B, X, Y] bool: labelled cells within r cells of a cell of another labelled class."""
+    yf = y.float()[:, None]
+    hi = F.max_pool2d(yf, 2 * r + 1, 1, r)
+    lo = -F.max_pool2d(torch.where(yf > 0, -yf, -torch.inf), 2 * r + 1, 1, r)  # min over the labelled cells
+    return ((hi > lo) & (lo > 0))[:, 0] & (y > 0)
+
+
+def seg_loss(out, y, weight, lovasz=0.0, known=0.0, edge=0.0, edge_r=2):
+    """cross entropy (+ Lovasz) over the classes; with known > 0 channel 0 learns "cell unlabelled" (BCE). edge > 0
+    weights the cross entropy of the cells near a class boundary (1 + edge): thin lines and edges are few cells."""
+    if edge:
+        ce = F.cross_entropy(out.float(), y, weight=weight, ignore_index=0, reduction="none")
+        w = 1 + edge * near_boundary(y, edge_r).float()
+        lab = (y > 0).float()
+        loss = (ce * w).sum() / (weight[y] * w * lab).sum().clamp(min=1)
+    else:
+        loss = F.cross_entropy(out.float(), y, weight=weight, ignore_index=0)
     if lovasz:
         loss = loss + lovasz * lovasz_softmax(out, y, range(1, out.shape[1]))
     if known:

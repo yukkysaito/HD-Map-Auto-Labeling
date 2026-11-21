@@ -5,7 +5,7 @@ import torch
 
 from hdlabel.bevnet.data import NC, downsample
 from hdlabel.bevnet.geometry import grid, project
-from hdlabel.bevnet.losses import seg_loss
+from hdlabel.bevnet.losses import near_boundary, seg_loss
 from hdlabel.bevnet.metrics import Scores, predict
 from hdlabel.bevnet.model import BEVSegNet
 
@@ -72,3 +72,13 @@ def test_downsample_majority_ignores_unobserved():
     y = torch.zeros(1, 4, 4, dtype=torch.long)
     y[0, :2, :2] = torch.tensor([[2, 2], [0, 3]])
     assert downsample(y, 2)[0].tolist() == [[2, 0], [0, 0]]
+
+
+def test_near_boundary_marks_both_sides_of_a_class_edge_only():
+    y = torch.zeros(1, 6, 6, dtype=torch.long)
+    y[0, :, :3], y[0, :, 3:], y[0, 0] = 1, 2, 0
+    b = near_boundary(y, 1)[0]
+    assert b[1:, 2:4].all() and b.sum() == 10  # the unlabelled first row is no class edge
+    out, w = torch.randn(1, NC, 6, 6), torch.ones(NC)
+    w[0] = 0
+    assert torch.isclose(seg_loss(out, y, w), seg_loss(out, y, w, edge=1e-9))  # same normalisation as plain CE
