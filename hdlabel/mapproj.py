@@ -160,6 +160,72 @@ class Projector:
             acc["w"].index_add_(0, ci, w.double())
         return int(len(ci))
 
+    def gather(
+        self,
+        T_map_cam: np.ndarray,
+        K: np.ndarray,
+        seg: np.ndarray,
+        img: np.ndarray | None,
+        acc: dict,
+        rmax: float = 30.0,
+        near: float = 8.0,
+        tol: float = 0.3,
+        power: float = 2.0,
+    ) -> int:
+        """add one image to acc by looking up every surface cell within rmax in the image (cell -> pixel), the inverse
+        of project() (pixel -> cell). Every visible cell gets exactly one sample, so far cells have no holes and no
+        moire from the pixel footprint growing past the cell size. A cell counts as visible when the ray through its
+        pixel meets the surface within tol + 2% of the range of it (not hidden behind a rise of the surface);
+        non-ground pixels (vehicles, poles, ...) give no vote. Same vote mass as project(); distance weight
+        (near / max(r, near))^power: a higher power lets the sharper near views dominate wherever they exist."""
+        dev = self.dev
+        C = torch.from_numpy(T_map_cam[:3, 3] - self.origin).to(dev)
+        lo = torch.tensor(self.lo, device=dev, dtype=C.dtype)
+        c0 = torch.floor((C[:2] - rmax - lo) / self.res).long().clamp(min=0)
+        c1 = torch.ceil((C[:2] + rmax - lo) / self.res).long()
+        c1 = torch.minimum(c1, torch.tensor(self.Lshape, device=dev))
+        if (c1 <= c0).any():
+            return 0
+        ii, jj = torch.meshgrid(
+            torch.arange(int(c0[0]), int(c1[0]), device=dev), torch.arange(int(c0[1]), int(c1[1]), device=dev),
+            indexing="ij",
+        )  # fmt: skip
+        ci = self.cidx[(ii * self.Lshape[1] + jj).ravel()]
+        m = ci >= 0
+        ci = ci[m]
+        xy = torch.stack([ii.ravel()[m], jj.ravel()[m]], 1).double() * self.res + lo + 0.5 * self.res
+        r = (xy - C[:2]).norm(dim=1)
+        keep = r < rmax
+        ci, xy, r = ci[keep], xy[keep], r[keep]
+        if not len(ci):
+            return 0
+        P = torch.cat([xy, self.height_at(xy)[:, None].double()], 1)
+        Rm = torch.from_numpy(T_map_cam[:3, :3]).to(dev)
+        pc = (P - C) @ Rm  # camera frame (R^T (P - C))
+        Kt = torch.from_numpy(K).to(dev)
+        z = pc[:, 2]
+        u = Kt[0, 0] * pc[:, 0] / z + Kt[0, 2]
+        v = Kt[1, 1] * pc[:, 1] / z + Kt[1, 2]
+        h, w = seg.shape
+        ok = (z > 0.1) & (u >= 0) & (u < w) & (v >= 0) & (v < h)
+        ci, P, r, u, v = ci[ok], P[ok], r[ok], u[ok].long(), v[ok].long()
+        grp = self.lut[torch.from_numpy(seg).to(dev).long()[v, u]]
+        ok = torch.isin(grp, self.ground) & (P[:, 2] < C[2] - 0.02 * r)  # looking down at the cell
+        ci, P, r, u, v, grp = ci[ok], P[ok], r[ok], u[ok], v[ok], grp[ok]
+        if not len(ci):
+            return 0
+        Ph, conv, t = self.intersect(C, P - C)  # ray through the cell's own point: t = 1 if nothing is in front
+        ok = conv & ((Ph[:, :2] - P[:, :2]).norm(dim=1) < tol + 0.02 * r)
+        ci, r, u, v, grp = ci[ok], r[ok], u[ok], v[ok], grp[ok]
+        wt = (near / torch.clamp(r, min=near)) ** power
+        acc["votes"].index_put_((ci, grp), wt.float(), accumulate=True)
+        acc["n"].index_add_(0, ci, torch.ones_like(wt).float())
+        if img is not None and "rgb" in acc:
+            col = torch.from_numpy(img).to(dev)[v, u].double()
+            acc["rgb"].index_add_(0, ci, col * wt[:, None].double())
+            acc["w"].index_add_(0, ci, wt.double())
+        return int(len(ci))
+
     def render(
         self, T_map_cam: np.ndarray, K: np.ndarray, size, cls: np.ndarray, stride: int = 2, rmax: float = 40.0
     ) -> np.ndarray:

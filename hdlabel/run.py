@@ -507,6 +507,16 @@ def marking_args(area) -> list:
             "--frag-views", fr["short_min_views"]]  # fmt: skip
 
 
+def projection_args(area) -> list:
+    """project_labels.py options from the config `projection` and `fusion`."""
+    pr = area.cfg.get("projection") or {}
+    args = ["--mode", pr.get("mode", "splat")]
+    if pr.get("mode") == "gather":
+        args += ["--power", pr.get("power", 2.0)]
+    shift = (area.cfg.get("fusion") or {}).get("max_shift_m")
+    return args + (["--max-shift", shift] if shift else [])
+
+
 def curb_args(area, gts) -> list:
     """vectorize.py curb filter options from the config `markings.curb_filter` (none when it is off: unchanged)."""
     cf = area.cfg["markings"].get("curb_filter") or {}
@@ -589,7 +599,7 @@ def label(area, s, force):
         area,
         f"labels_{sid}",
         f"{STEPS}/project_labels.py",
-        ["--ground", f"{S}/surface/map_ground.npz", "--out", f"{S}/labels", *drv, *dbg()],
+        ["--ground", f"{S}/surface/map_ground.npz", "--out", f"{S}/labels", *drv, *projection_args(area), *dbg()],
         [f"{S}/labels/ground_map.npz"],
         [f"{S}/surface/map_ground.npz", *calibs],
         gpu=True,
@@ -787,6 +797,7 @@ def qa(area, s, force):
                 "--drive",
                 area.data(d),
                 area.calib(d),
+                *projection_args(area),
             ],
             [f"{Q}/labels_{d}/ground_map.npz"],
             [f"{S}/surface/map_ground.npz"],

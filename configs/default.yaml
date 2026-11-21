@@ -77,7 +77,11 @@ scenes:  {length_m: 300, context_m: 150, corridor_m: 40}  # scene = a drive insi
 calib:   {scenes: 3,          # image time offsets estimated on the N scenes with the most turning,
           time_offset: estimate}  # or a fixed offset in s for every camera (e.g. 0: hardware-synchronised cameras)
 fusion:  {max_drives: 5,       # labels of a scene from at most N drives on its road level,
-          max_days_apart: null} # recorded at most this many days apart from the scene's drive (null: any)
+          max_days_apart: null, # recorded at most this many days apart from the scene's drive (null: any),
+          max_shift_m: 0.5}     # whose markings line up with the scene's drive's (else: not fused; 0: no check)
+projection: {mode: gather,     # gather: every visible surface cell looks its class up in the image (no holes / moire
+             power: 4}          # at range); splat: every ground pixel votes for the cell its ray hits. power: distance
+                                # weight exponent of gather (near views dominate where they exist)
 dataset: {every_s: 0.5, val_every_s: null,  # val sample spacing (null = every_s; 0.1 = every model cycle for online_eval)
           history_s: 2.0, history_dt_s: 0.5,
           bev: {x: [-50, 150], y: [-80, 80], res: 0.2},  # default ego-frame crop (the loader may use any range / res)

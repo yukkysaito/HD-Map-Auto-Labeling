@@ -6,6 +6,9 @@ official extrinsic + time offset (time_offset.py), classes from the per-image se
 Several drives are fused (votes are summed); keyframes whose camera is farther than --rmax from the grid are skipped, and
 cameras whose time offset could not be estimated (offset_status failed) are not used.
 Per 0.1 m cell: class = argmax of the ground-class votes (0 = unobserved), ortho RGB = distance-weighted mean.
+--mode gather looks every visible cell up in the image instead of splatting pixels onto cells (no holes or moire at
+range). With --max-shift, a further drive whose markings line up with the first drive's only after a shift (time offset
+or pose error of a drive) is not fused.
 Writes OUT/ground_map.npz (cls 0.1 m raster: 0 unobserved, 1.. common.CLASSES; height / height_w surface grid; origin,
 lo, res, surf_res; compact votes / n / cells), OUT/ground_map.json, OUT/stats.json; with --debug DIR:
 DIR/ground_map.png (classes), DIR/ortho.jpg (also used by the review sheets)
@@ -23,8 +26,71 @@ import numpy as np
 import torch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
-from hdlabel.common import CLASSES, PALETTE, PoseInterp
+from hdlabel.common import CLASSES, GROUPS, PALETTE, PoseInterp
 from hdlabel.mapproj import Camera, Projector, loader, snap_to_ground
+
+
+def project_drive(pj, data, calib, acc, a, stats):
+    """every keyframe of every camera of one drive that can see the grid into acc."""
+    poser = PoseInterp(f"{data}/gt.npy")
+    name = os.path.basename(data.rstrip("/"))
+    if a.snap:
+        stats[f"{name}/snap"] = snap_to_ground(poser, a.ground)
+    lo_m, hi_m = pj.lo - a.rmax, pj.lo + np.array(pj.Lshape) * pj.res + a.rmax  # camera positions that see the grid
+    for f in sorted(glob.glob(f"{calib}/cam*.json")):
+        c = int(os.path.basename(f)[3:-5])
+        if not os.path.isdir(f"{data}/seg_cam{c}"):
+            continue
+        if json.load(open(f)).get("offset_status") == "failed":  # unknown time offset: would smear wrong labels
+            stats[f"{name}/cam{c}"] = "skipped: time offset failed"
+            print(f"{name} cam{c}: skipped (time offset failed)")
+            continue
+        cam = Camera(data, calib, c, poser)
+        T = cam.T_map_cam(np.arange(len(cam.st)))
+        xy = T[:, :2, 3] - pj.origin[:2]
+        idx = np.flatnonzero(np.all((xy > lo_m) & (xy < hi_m), 1) & cam.on_level)[:: a.every]
+        if not len(idx):
+            continue
+        t0 = time.time()
+        n = 0
+        for k, (seg, img) in zip(idx, loader([cam.seg[i] for i in idx], [cam.files[i] for i in idx])):
+            if a.mode == "gather":
+                n += pj.gather(T[k], cam.K, seg, img, acc, a.rmax, a.near, power=a.power)
+            else:
+                n += pj.project(T[k], cam.K, seg, img, acc, a.stride, a.rmax, a.near)
+        stats[f"{name}/cam{c}"] = dict(images=len(idx), samples_M=round(n / 1e6, 1))
+        print(f"{name} cam{c}: {len(idx)} images, {n / 1e6:.0f} M ground samples, {time.time() - t0:.0f} s", flush=True)
+
+
+def drive_shift(pj, ref, new, min_mass, radius=1.5, min_cells=500):
+    """how well the marking cells of two accumulators line up: the 2D shift (within radius m) that maximises their
+    overlap on the cells both observed. Returns shift_m (0 without enough marking cells), the overlap at zero and at
+    the best shift."""
+    k = list(GROUPS).index("marking")
+
+    def mask(acc):
+        v = acc["votes"]
+        m = v.sum(1)
+        return m > min_mass, (m > min_mass) & (v.argmax(1) == k)
+
+    (oa, ma), (ob, mb) = mask(ref), mask(new)
+    both = oa & ob
+    ma, mb = ma & both, mb & both
+    if int(ma.sum()) < min_cells or int(mb.sum()) < min_cells:
+        return dict(marking_cells=[int(ma.sum()), int(mb.sum())])
+    A = torch.from_numpy(pj.dense(ma)).to(pj.dev).float()
+    B = torch.from_numpy(pj.dense(mb)).to(pj.dev).float()
+    rows, cols = torch.nonzero(A + B, as_tuple=True)
+    R = int(round(radius / pj.res))
+    A = A[rows.min() : rows.max() + 1, cols.min() : cols.max() + 1]
+    B = torch.nn.functional.pad(B[rows.min() : rows.max() + 1, cols.min() : cols.max() + 1], (R, R, R, R))
+    h, w = A.shape
+    score = torch.stack([(A * B[R + dx : R + dx + h, R + dy : R + dy + w]).sum()
+                         for dx in range(-R, R + 1) for dy in range(-R, R + 1)]).view(2 * R + 1, 2 * R + 1)  # fmt: skip
+    i = int(score.argmax())
+    dx, dy = i // (2 * R + 1) - R, i % (2 * R + 1) - R
+    return dict(marking_cells=[int(ma.sum()), int(mb.sum())], overlap_zero=int(score[R, R]),
+                overlap_best=int(score.max()), shift_m=round(float(np.hypot(dx, dy)) * pj.res, 2))  # fmt: skip
 
 
 def main(argv=None):
@@ -50,41 +116,45 @@ def main(argv=None):
     p.add_argument("--rmax", type=float, default=30.0)
     p.add_argument("--near", type=float, default=8.0)
     p.add_argument("--min-mass", type=float, default=0.05)
+    p.add_argument(
+        "--mode",
+        choices=["splat", "gather"],
+        default="splat",
+        help="splat: every ground pixel votes for the cell its ray hits; gather: every visible cell looks up its pixel"
+        " (no holes / moire at range, mapproj.Projector.gather)",
+    )
+    p.add_argument(
+        "--power", type=float, default=2.0, help="gather: distance weight exponent (mapproj.Projector.gather)"
+    )
+    p.add_argument(
+        "--max-shift",
+        type=float,
+        default=0.0,
+        help="a further drive is not fused when its markings fit the first drive's best shifted by more than this (m;"
+        " 0: fuse every drive). Time offset or pose errors of a drive would otherwise put ghost lines in the map",
+    )
     p.add_argument("--every", type=int, default=1, help="use every n-th keyframe (quick tests)")
     a = p.parse_args(argv)
 
     pj = Projector(a.ground)
-    acc = pj.new_acc(rgb=True)
+    acc = None
     stats = {}
-    lo_m, hi_m = pj.lo - a.rmax, pj.lo + np.array(pj.Lshape) * pj.res + a.rmax  # camera positions that can see the grid
     for data, calib in a.drive:
-        poser = PoseInterp(f"{data}/gt.npy")
         name = os.path.basename(data.rstrip("/"))
-        if a.snap:
-            stats[f"{name}/snap"] = snap_to_ground(poser, a.ground)
-        for f in sorted(glob.glob(f"{calib}/cam*.json")):
-            c = int(os.path.basename(f)[3:-5])
-            if not os.path.isdir(f"{data}/seg_cam{c}"):
-                continue
-            if json.load(open(f)).get("offset_status") == "failed":  # unknown time offset: would smear wrong labels
-                stats[f"{name}/cam{c}"] = "skipped: time offset failed"
-                print(f"{name} cam{c}: skipped (time offset failed)")
-                continue
-            cam = Camera(data, calib, c, poser)
-            T = cam.T_map_cam(np.arange(len(cam.st)))
-            xy = T[:, :2, 3] - pj.origin[:2]
-            idx = np.flatnonzero(np.all((xy > lo_m) & (xy < hi_m), 1) & cam.on_level)[:: a.every]
-            if not len(idx):
-                continue
-            t0 = time.time()
-            npx = 0
-            for k, (seg, img) in zip(idx, loader([cam.seg[i] for i in idx], [cam.files[i] for i in idx])):
-                npx += pj.project(T[k], cam.K, seg, img, acc, a.stride, a.rmax, a.near)
-            stats[f"{name}/cam{c}"] = dict(images=len(idx), pixels_M=round(npx / 1e6, 1))
-            print(
-                f"{name} cam{c}: {len(idx)} images, {npx / 1e6:.0f} M ground pixels, {time.time() - t0:.0f} s",
-                flush=True,
-            )
+        new = pj.new_acc(rgb=True)
+        project_drive(pj, data, calib, new, a, stats)
+        if acc is None:  # the scene's own drive: the reference
+            acc = new
+            continue
+        chk = stats[f"{name}/fusion"] = drive_shift(pj, acc, new, a.min_mass)
+        if a.max_shift and chk.get("shift_m", 0) > a.max_shift:  # labels of this drive sit elsewhere: would ghost
+            chk["fused"] = False
+            print(f"{name}: not fused, its markings are {chk['shift_m']} m off the reference drive's", flush=True)
+            continue
+        chk["fused"] = True
+        for k in acc:
+            acc[k] += new[k]
+        del new
 
     votes = acc["votes"]
     mass = votes.sum(1)
