@@ -12,7 +12,10 @@
 #   optional     {name: meaning}; attributes some elements carry (e.g. set by a review fix)
 #   correct      when the verifier / the person calls an element correct
 #   wrong        when it is wrong (nothing real there, or clearly in the wrong place)
-version: 2
+#
+# raster: the classes of the label raster (map.npz, docs/DATASET.md), in id order. The code (hdlabel/common.py CLASSES)
+#   must match this list; a test and `validate` check it. A class not listed here is not labelled.
+version: 3
 principles:
   - Follow the paint and the physical road as they are. No semantic interpretation in the geometry; grouping or
     meaning (line_id, style, arrow directions) goes into attributes.
@@ -100,3 +103,12 @@ kinds:
     geometry: LineString
     definition: the outline of the drivable area, split into runs.
     attributes: {length: m, observed: true = a real boundary (curb / sidewalk / off-road outside); false = edge of the observed area}
+raster:
+  - {id: 0, name: unobserved, definition: seen by no camera or off the road surface; not a class to learn (excluded from the loss)}
+  - {id: 1, name: road, definition: roadway surface, including manhole covers, drains and patches}
+  - {id: 2, name: marking, definition: road paint except crosswalks (lane lines, stop lines, arrows, marking areas)}
+  - {id: 3, name: crosswalk, definition: crosswalk paint}
+  - {id: 4, name: curb, definition: the raised kerb between the road and the sidewalk or ground}
+  - {id: 5, name: sidewalk, definition: sidewalk and pedestrian area}
+  - {id: 6, name: offroad, definition: vegetation, ground and other non-road surfaces}
+  - {id: 7, name: other, definition: anything else on the ground surface (rare)}

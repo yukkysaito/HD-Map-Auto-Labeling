@@ -1,5 +1,5 @@
-"""The label specification (spec/labels.yaml): what each vector element is, its geometry and attributes, and when it is
-correct. The verifier prompt and the benchmark review page render their judging rules from it (rules()), and
+"""The label specification (spec/labels.yaml): the raster classes (raster_classes()), what each vector element is, its
+geometry and attributes, and when it is correct. The verifier prompt and the benchmark review page render their judging rules from it (rules()), and
 `validate` checks exported elements against it (conform()). Changing the spec changes the verifier prompt version, so
 the next run verifies again under the new rules; `./autolabel spec` brings the tools in line (docs/AGENTS.md)."""
 
@@ -22,6 +22,13 @@ def load(path: str = PATH) -> dict:
 def version(path: str = PATH) -> str:
     """content hash of the spec (what the tools were aligned to is recorded in tools/registry.yaml `spec`)."""
     return hashlib.sha1(open(path, "rb").read()).hexdigest()[:10]
+
+
+def raster_classes(spec: dict | None = None) -> list[str]:
+    """names of the label raster classes in id order (spec `raster`)."""
+    rs = (spec or load())["raster"]
+    assert [r["id"] for r in rs] == list(range(len(rs))), "spec raster ids must be 0, 1, 2, ... in order"
+    return [r["name"] for r in rs]
 
 
 def rules(groups=("marking", "curb"), spec: dict | None = None, html: bool = False) -> str:

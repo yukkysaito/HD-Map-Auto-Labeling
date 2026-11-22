@@ -107,3 +107,9 @@ def test_spec_loop_end_to_end(tmp_path_factory, monkeypatch):
     assert good["merged"] and "piece_index" in (tmp_path / "tool.py").read_text()
     assert not orchestrator.spec_state()["changed"]  # recorded as aligned
     assert [r["status"] for r in kb.list(kind="spec")] == ["done", "failed"]
+
+
+def test_raster_classes_of_the_code_are_the_spec_ones():
+    from hdlabel.common import CLASSES, PALETTE
+
+    assert spec.raster_classes() == CLASSES and len(PALETTE) == len(CLASSES)

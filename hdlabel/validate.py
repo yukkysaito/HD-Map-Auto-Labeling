@@ -149,6 +149,10 @@ def validate(dataset_json: str, read_images: bool = False) -> Report:
     if idx.get("format") not in SUPPORTED:
         rep.error("dataset.json", f"format {idx.get('format')} not in {SUPPORTED}")
         return rep
+    from hdlabel import spec
+
+    if idx.get("classes") != spec.raster_classes():
+        rep.error("dataset.json", f"classes {idx.get('classes')} are not the spec raster classes ({spec.PATH})")
     for s in idx["scenes"]:
         try:
             check_scene(root, s, rep, read_images)

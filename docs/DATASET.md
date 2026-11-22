@@ -67,6 +67,9 @@ Cropped with `SceneMap.crop(T_map_base, x, y, res)` in `hdlabel/bev.py`.
 - Cell value: the class where the base_link z axis through the cell meets the 3D road surface (correct on slopes).
 - `height`: the base_link z of that point.
 
+The classes are defined in `spec/labels.yaml` (`raster`); `dataset.json` `classes` lists them and `validate` checks
+that they match.
+
 | id | class | meaning |
 |---|---|---|
 | 0 | unobserved | seen by no camera / off the road surface (**excluded from the loss**) |
