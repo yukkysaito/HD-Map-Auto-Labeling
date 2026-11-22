@@ -40,6 +40,18 @@ def test_conform():
     assert any("hedge" in e for e in errs) and warns == ["curb: attribute 'colour' is not in the spec"]
 
 
+def test_marking_candidate_takes_geometry_and_attributes_of_its_kind():
+    sp = spec.load()
+    ring = {"type": "Polygon", "coordinates": [[[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 0, 0]]]}
+    area = {k: 1 for k in sp["kinds"]["marking_area"]["attributes"]}
+    gate = dict(candidate_of="marking_area", marking_check=["raised"], marking_level={})
+    cand = {"type": "Feature", "geometry": ring, "properties": dict(area, kind="marking_candidate", **gate)}
+    assert spec.conform([cand], sp) == ([], [])
+    line = {"type": "Feature", "geometry": {"type": "LineString", "coordinates": [[0, 0, 0], [1, 0, 0]]},
+            "properties": dict(cand["properties"])}  # fmt: skip
+    assert any("geometry LineString, spec says Polygon" in e for e in spec.conform([line], sp)[0])
+
+
 def test_spec_loop_end_to_end(tmp_path_factory, monkeypatch):
     """spec change -> engineer (stand-in) edits the tools in a worktree -> checks -> merge -> aligned; an engineer that
     edits the spec itself is rejected."""

@@ -6,16 +6,16 @@
 #
 # kinds.<kind>:
 #   group        verification group: marking (outlined yellow) | curb (blue) | none (not verified one by one)
-#   geometry     LineString | Polygon
+#   geometry     LineString | Polygon | as candidate_of (that of the kind named by the attribute candidate_of)
 #   definition   what the element is, in one or two sentences
 #   attributes   {name: meaning}; every element of the kind carries all of them (value may be null)
-#   optional     {name: meaning}; attributes some elements carry (e.g. set by a review fix)
+#   optional     {name: meaning}; attributes some elements carry (e.g. set by a review fix); "*": those of candidate_of
 #   correct      when the verifier / the person calls an element correct
 #   wrong        when it is wrong (nothing real there, or clearly in the wrong place)
 #
 # raster: the classes of the label raster (map.npz, docs/DATASET.md), in id order. The code (hdlabel/common.py CLASSES)
 #   must match this list; a test and `validate` check it. A class not listed here is not labelled.
-version: 3
+version: 4
 principles:
   - Follow the paint and the physical road as they are. No semantic interpretation in the geometry; grouping or
     meaning (line_id, style, arrow directions) goes into attributes.
@@ -37,6 +37,7 @@ kinds:
       segments: "[[0, length]] (kept for the format)"
       confidence: mean vote share of the marking class over its cells
       observations: median number of camera views of its cells
+    optional: {marking_level: LiDAR road-level measurements of the marking gate (when it ran)}
     correct:
       - the outline lies on paint on the road surface and follows it within about 0.3 m
       - a short piece of a real line (one dash) is correct
@@ -51,6 +52,7 @@ kinds:
     geometry: LineString
     definition: a wide painted line across the lanes (about 0.45 m wide), as painted.
     attributes: {length: length (m), width: paint width (m), confidence: as lane_line, observations: as lane_line}
+    optional: {marking_level: LiDAR road-level measurements of the marking gate (when it ran)}
     correct: ["the outline lies on the wide line across the lanes and follows it within about 0.3 m"]
     wrong: ["no paint there, or the outline is clearly beside the paint"]
   marking_area:
@@ -58,7 +60,8 @@ kinds:
     geometry: Polygon
     definition: wide or compact paint that is not a thin line (symbols, letters, hatched zones, wide bars), as painted.
     attributes: {confidence: as lane_line, observations: as lane_line}
-    optional: {type: set by a review fix (e.g. zebra), reviewed: changed by a review fix}
+    optional: {type: set by a review fix (e.g. zebra), reviewed: changed by a review fix,
+      marking_level: LiDAR road-level measurements of the marking gate (when it ran)}
     correct: ["the outline encloses paint on the road surface"]
     wrong: ["no paint inside the outline, or it clearly covers a wrong extent"]
   arrow:
@@ -67,6 +70,7 @@ kinds:
     definition: a lane direction arrow, as a line from tail to tip, with the outlines of its paint.
     attributes: {arrow_id: id, directions: "straight / left / right", shape: "S, L, R, SL, SR", score: shape match,
                  length: m, width: m, outlines: paint outline rings, confidence: as lane_line, observations: as lane_line}
+    optional: {marking_level: LiDAR road-level measurements of the marking gate (when it ran)}
     correct: ["the outline lies on a painted arrow"]
     wrong: ["no arrow paint there, or the outline is clearly beside it"]
   crosswalk:
@@ -93,6 +97,14 @@ kinds:
     geometry: LineString
     definition: a curb line the curb filter judged not to be a road kerb; not a boundary for training.
     attributes: {curb_check: the failed rules, length: m, confidence: as curb, observations: as lane_line}
+  marking_candidate:
+    group: none
+    geometry: as candidate_of
+    definition: a lane_line, stop_line, marking_area or arrow the marking gate found off the road level by the LiDAR
+      ground height (raised median, ledge, sidewalk or plaza behind a kerb step); not a marking for training. Kept in
+      the vectors for inspection; a review fix can restore it.
+    attributes: {candidate_of: the kind it was, marking_check: the failed rules, marking_level: the measurements}
+    optional: {"*": the attributes of the kind it was}
   drivable_area:
     group: none
     geometry: Polygon

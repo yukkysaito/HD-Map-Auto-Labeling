@@ -71,9 +71,11 @@ def conform(features: list[dict], spec: dict | None = None) -> tuple[list[str], 
                 errors.append(f"kind {k!r} is not in the spec")
                 seen.add(("kind", k))
             continue
+        base = sp["kinds"].get(pr.get("candidate_of"), {}) if ks["geometry"] == "as candidate_of" else {}
+        want = base.get("geometry", ks["geometry"])
         g = f.get("geometry", {}).get("type")
-        if g != ks["geometry"] and (k, "geometry") not in seen:
-            errors.append(f"{k}: geometry {g}, spec says {ks['geometry']}")
+        if g != want and (k, "geometry") not in seen:
+            errors.append(f"{k}: geometry {g}, spec says {want}")
             seen.add((k, "geometry"))
         req = set(ks.get("attributes") or {})
         for a in sorted(req - set(pr)):
@@ -81,6 +83,8 @@ def conform(features: list[dict], spec: dict | None = None) -> tuple[list[str], 
                 errors.append(f"{k}: attribute {a!r} missing (element {i})")
                 seen.add((k, a))
         known = req | set(ks.get("optional") or {}) | {"kind", "reviewed", "checked"}
+        if "*" in (ks.get("optional") or {}):  # a candidate keeps the attributes of the kind it was
+            known |= set(base.get("attributes") or {}) | set(base.get("optional") or {})
         for a in sorted(set(pr) - known):
             if (k, "+" + a) not in seen:
                 warnings.append(f"{k}: attribute {a!r} is not in the spec")
