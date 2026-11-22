@@ -329,8 +329,8 @@ tools:
     active: default
     history: []
 spec:
-  version: 6b1f5127a1
-  commit: 870f47e
+  version: 303c81a246
+  commit: 3a44d6f
   date: '2026-11-23'
   by: agent:claude-opus-5-5
-  note: manhole removed (format 4) and raster classes moved into the spec by hand; tests pass
+  note: marking_candidate added; conform() handles 'as candidate_of'; tests pass
