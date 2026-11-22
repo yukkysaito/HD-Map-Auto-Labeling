@@ -141,6 +141,9 @@ def experiment_cmd(area, a):
     """baseline (cached per code + lock) and candidate runs, metrics, gate, optional adoption."""
     from hdlabel.agents import bench, experiment, registry
 
+    missing = [f"--{k}" for k in ("id", "target") if not getattr(a, k)]
+    if missing:  # before any run: the baseline alone takes minutes
+        raise SystemExit(f"experiment needs {' and '.join(missing)} (e.g. --id my-test --target marking.fp)")
     tool, var = parse_variant(a.variant)
     reg = registry.load()
     overlay = json.loads(a.overlay) if a.overlay else {}
