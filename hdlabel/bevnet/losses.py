@@ -41,6 +41,25 @@ def near_boundary(y, r: int):
     return ((hi > lo) & (lo > 0))[:, 0] & (y > 0)
 
 
+def block_mean(v: torch.Tensor, f: int) -> torch.Tensor:
+    """[B, X, Y] values (NaN = none) -> [B, X/f, Y/f] mean of the finite values per f x f block (NaN if none)."""
+    b, h, w = v.shape
+    v = v.reshape(b, h // f, f, w // f, f)
+    ok = torch.isfinite(v)
+    n = ok.sum((2, 4))
+    return torch.where(n > 0, torch.where(ok, v, 0).sum((2, 4)) / n.clamp(min=1), torch.nan)
+
+
+def height_loss(pred: torch.Tensor, height: torch.Tensor, f: int) -> torch.Tensor:
+    """smooth L1 (m) of the predicted road surface height [B, X, Y] against the label height [B, X*f, Y*f] (NaN = no
+    surface), over the cells that have one."""
+    y = block_mean(height, f)
+    ok = torch.isfinite(y)
+    if not ok.any():
+        return pred.sum() * 0
+    return F.smooth_l1_loss(pred[ok], y[ok], beta=0.1)
+
+
 def seg_loss(out, y, weight, lovasz=0.0, known=0.0, edge=0.0, edge_r=2):
     """cross entropy (+ Lovasz) over the classes; with known > 0 channel 0 learns "cell unlabelled" (BCE). edge > 0
     weights the cross entropy of the cells near a class boundary (1 + edge): thin lines and edges are few cells."""

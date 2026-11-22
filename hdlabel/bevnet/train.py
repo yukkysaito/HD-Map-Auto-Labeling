@@ -23,7 +23,7 @@ import torch
 from hdlabel.common import PALETTE
 
 from .data import NC, BEVDataset, collate, downsample
-from .losses import class_weights, seg_loss
+from .losses import class_weights, height_loss, seg_loss
 from .metrics import VIS_DEPTH, evaluate, predict
 from .model import BEVSegNet
 
@@ -78,6 +78,9 @@ def main(argv=None):
     p.add_argument("--known", type=float, default=0.5, help="weight of the abstention (cell unlabelled) loss")
     p.add_argument("--edge", type=float, default=0.0, help="extra cross-entropy weight of cells near class boundaries")
     p.add_argument("--aux", type=float, default=0.5, help="weight of the loss on the context logits")
+    p.add_argument(
+        "--height", type=float, default=0.0, help="weight of the auxiliary road surface height loss (0: no head)"
+    )
     p.add_argument("--tag", default="")
     a = p.parse_args(argv)
     torch.manual_seed(0)
@@ -92,7 +95,16 @@ def main(argv=None):
     tr, va = trs[0], vas[0]
     train_set = torch.utils.data.ConcatDataset(trs) if len(trs) > 1 else tr
     net = BEVSegNet(
-        bev, len(tr.cams), a.image_size, a.cell, a.out_res or None, a.heights, a.vit or None, a.jitter, a.history
+        bev,
+        len(tr.cams),
+        a.image_size,
+        a.cell,
+        a.out_res or None,
+        a.heights,
+        a.vit or None,
+        a.jitter,
+        a.history,
+        height_head=a.height > 0,
     )
     net = net.to(dev)
     known = a.known > 0
@@ -119,6 +131,8 @@ def main(argv=None):
             loss = seg_loss(out, downsample(x["bev_cls"], net.f).to(dev), wts, a.lovasz, a.known, a.edge)
             if net.ctx_logits is not None and a.aux:
                 loss = loss + a.aux * seg_loss(net.ctx_logits, downsample(x["bev_cls"], net.fc).to(dev), wts)
+            if "height" in net.aux:
+                loss = loss + a.height * height_loss(net.aux["height"], x["bev_height"].to(dev), net.fc)
             opt.zero_grad(set_to_none=True)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(net.parameters(), 5.0)

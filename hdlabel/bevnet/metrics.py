@@ -10,6 +10,7 @@ import torch.nn.functional as F
 from hdlabel.common import CLASSES
 
 from .data import NC, collate
+from .losses import block_mean
 
 VIS_DEPTH = 50.0  # m: cells no camera sees closer than this are unknown
 THIN = ["marking", "crosswalk", "curb"]  # classes whose geometry is scored by the boundary F-score
@@ -76,6 +77,7 @@ def evaluate(net, ds, n: int | None = None, known: bool = False) -> dict:
     was = net.training
     net.eval()
     sc = Scores(ds.bev["res"])
+    herr = torch.zeros(2)  # sum |error|, cells (road surface height, if the model has the head)
     idx = np.arange(len(ds)) if not n or n >= len(ds) else np.linspace(0, len(ds) - 1, n).astype(int)
     for i in idx:
         x = collate([ds[i]])
@@ -85,5 +87,12 @@ def evaluate(net, ds, n: int | None = None, known: bool = False) -> dict:
         pr = upsample(predict(out)[0].cpu(), net.f)
         pk = upsample(predict(out, known, net.vis_depth < VIS_DEPTH)[0].cpu(), net.f)
         sc.add(pr, y, pk)
+        if "height" in net.aux:
+            t = block_mean(x["bev_height"], net.fc)[0]
+            ok = torch.isfinite(t)
+            herr += torch.tensor([float((net.aux["height"][0].cpu()[ok] - t[ok]).abs().sum()), float(ok.sum())])
     net.train(was)
-    return sc.result()
+    r = sc.result()
+    if herr[1] > 0:
+        r["height_mae"] = round(float(herr[0] / herr[1]), 3)
+    return r

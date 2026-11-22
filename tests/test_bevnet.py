@@ -95,3 +95,20 @@ def test_temporal_fusion_trains_on_past_frames():
     out = net(x)
     seg_loss(out, downsample(x["bev_cls"], net.f), torch.ones(NC)).backward()
     assert out.shape == (1, NC, 160, 64) and net.gru.zr.weight.grad.abs().sum() > 0
+
+
+def test_height_head_is_an_auxiliary_task_on_the_shared_bev():
+    from hdlabel.bevnet.losses import block_mean, height_loss
+
+    torch.manual_seed(0)
+    net = BEVSegNet(BEV, 1, SIZE, cell=0.4, out_res=0.1, heights=[0.0, 1.0], vit=None, height_head=True)
+    x = batch()
+    h = torch.full((1, 160, 64), float("nan"))
+    h[:, :80] = 0.3  # a surface on half of the area, no surface (NaN) elsewhere
+    out = net(x)
+    assert out.shape == (1, NC, 160, 64) and net.aux["height"].shape == (1, 40, 16)
+    assert torch.isnan(block_mean(h, 4)[0, 20:]).all() and torch.allclose(block_mean(h, 4)[0, :20], torch.tensor(0.3))
+    loss = height_loss(net.aux["height"], h, net.fc)
+    loss.backward()
+    assert torch.isfinite(loss) and net.bev.inp[0][0].weight.grad.abs().sum() > 0  # reaches the shared BEV backbone
+    assert BEVSegNet(BEV, 1, SIZE, heights=[0.0], vit=None).height_head is None  # off by default (map only)

@@ -130,16 +130,20 @@ class BEVUNet(nn.Module):
 class BEVSegNet(nn.Module):
     def __init__(self, bev: dict, n_cams: int, image_size=(704, 448), cell: float = 0.4, out_res: float | None = 0.1,
                  heights=(-0.5, 0.0, 0.5, 1.0, 2.0), vit: str | None = "facebook/dinov2-base", jitter: float = 0.0,
-                 history: int = 1):  # fmt: skip
+                 history: int = 1, height_head: bool = False):  # fmt: skip
         super().__init__()
         self.config = dict(bev=dict(bev), n_cams=n_cams, image_size=list(image_size), cell=cell, out_res=out_res,
-                           heights=list(heights), vit=vit, jitter=jitter, history=history)  # fmt: skip
+                           heights=list(heights), vit=vit, jitter=jitter, history=history,
+                           height_head=height_head)  # fmt: skip
         self.size, self.heights, self.jitter, self.history = tuple(image_size), list(heights), jitter, history
         self.enc = ImageEncoder(vit)
         self.hmix = nn.Sequential(nn.Conv2d(128 * len(self.heights) + 2, 128, 1), gn(128), nn.ReLU())
         self.gru = ConvGRU(128) if history > 1 else None
         self.bev = BEVUNet(128)
         self.ctx_head = nn.Conv2d(128, NC, 1)
+        # auxiliary task heads on the shared BEV feature (named outputs in self.aux; not needed for the map at inference)
+        self.height_head = nn.Sequential(conv(128, 64), nn.Conv2d(64, 1, 1)) if height_head else None
+        self.aux = {}
         self.register_buffer("Pc", grid(bev, cell), persistent=False)
         self.fc = int(round(cell / bev["res"]))  # label cells per context cell
         self.f = self.fc
@@ -212,6 +216,7 @@ class BEVSegNet(nn.Module):
                 h = self.gru(frame(ft.view(B, C, *ft.shape[1:]), t)[0], h)
             m = self.gru(m, h)
         h = self.bev(m)
+        self.aux = {} if self.height_head is None else {"height": self.height_head(h)[:, 0].float()}  # [B, X, Y] m
         ctx = self.ctx_head(h)
         if not self.out_res:
             self.ctx_logits = None

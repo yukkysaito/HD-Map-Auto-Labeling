@@ -33,8 +33,9 @@ class BEVDataset(HDMapDataset):
                 A = A @ np.diag([1.0, -1.0, 1.0, 1.0])
             sid, r = self.items[i]
             T = np.array(r["T_map_base"]) @ A
-            cls, _ = self.scene_map(sid).crop(T, self.bev["x"], self.bev["y"], self.bev["res"])
+            cls, height = self.scene_map(sid).crop(T, self.bev["x"], self.bev["y"], self.bev["res"])
             x["bev_cls"] = torch.from_numpy(cls.astype(np.int64))
+            x["bev_height"] = torch.from_numpy(height.astype(np.float32))
         x["A"] = torch.from_numpy(A.astype(np.float32))
         return x
 
