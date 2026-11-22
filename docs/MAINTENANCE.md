@@ -21,7 +21,7 @@
 | `tools/registry.yaml` | The tools, their variants, the active one and its adoption history |
 | `hdlabel/steps/*.py` | The processing steps (each a `main(argv)`, runs standalone, see `-h`). Steps are connected only through files |
 | `hdlabel/eval/` | `compare_labels` / `compare_vectors`: repeatability between two drives (`./autolabel qa`).<br>`dataset_stats`: dataset statistics.<br>`train_smoke` / `online_eval`: learnability check and per-cycle evaluation |
-| `hdlabel/bevnet/` | Reference camera-only BEV segmentation network (docs/DATASET.md "Reference model"): `model`, `data`, `losses`, `metrics`, `train` and `video` (`python -m hdlabel.bevnet.train` / `.video`) |
+| `hdlabel/bevnet/` | Reference camera-only BEV segmentation network (docs/DATASET.md "Reference model"): `model`, `data`, `losses`, `metrics`, `train`, `evaluate` and `video` (`python -m hdlabel.bevnet.train` / `.evaluate` / `.video`) |
 | `tests/` | Unit tests + `test_pipeline_synthetic.py`: the whole pipeline on synthetic data (`tests/synthetic.py`) on CPU, labels checked against the synthetic world (~1 min) |
 | `pyproject.toml`, `.github/workflows/ci.yml`, `docker/` | Package, ruff / pytest settings, CI (lint + tests on CPU for every push), GPU image |
 
