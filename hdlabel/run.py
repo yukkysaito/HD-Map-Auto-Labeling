@@ -535,7 +535,8 @@ def marking_gate_args(area, gts) -> list:
         return []
     gt = [] if (area.cfg["markings"].get("curb_filter") or {}).get("enabled") else ["--gt", *gts]
     return ["--marking-gate", *gt, "--mark-tol", mg["tol_m"], "--mark-min-level", mg["min_on_level"], "--mark-step",
-            mg["step_m"], "--mark-ref", mg["ref_m"]] + (["--mark-rules", *mg["rules"]] if mg.get("rules") else [])  # fmt: skip
+            mg["step_m"], "--mark-ref", mg["ref_m"]] + (["--mark-rules", *mg["rules"]] if mg.get("rules") else []) + (
+            ["--mark-kerb", mg["kerb_m"]] if mg.get("kerb_m") else [])  # fmt: skip
 
 
 def fixes_file(area) -> str:

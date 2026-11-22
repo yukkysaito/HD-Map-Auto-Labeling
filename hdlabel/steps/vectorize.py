@@ -126,6 +126,12 @@ def main(argv=None):
     )
     p.add_argument("--mark-step", type=float, default=0.07, help="--marking-gate: height step to the road (m)")
     p.add_argument("--mark-ref", type=float, default=3.0, help="--marking-gate: road cells within this distance (m)")
+    p.add_argument(
+        "--mark-kerb",
+        type=float,
+        default=0.0,
+        help="--marking-gate: off_level not for elements mostly within this distance of a curb (m; 0: off)",
+    )
     p.add_argument("--mark-rules", nargs="*", help="--marking-gate: apply only these rules (default: all)")
     p.add_argument(
         "--fixes",
@@ -707,7 +713,8 @@ def main(argv=None):
         Hc = upsample(H, max(1, int(round(sres / res))), cls.shape)
         idx = [i for i, f in enumerate(feats) if f["properties"]["kind"] in ("lane_line", "stop_line", "marking_area",
                "arrow") and not f["properties"].get("reviewed")]  # fmt: skip
-        params = dict(tol=a.mark_tol, min_on_level=a.mark_min_level, step_m=a.mark_step, ref_m=a.mark_ref)
+        params = dict(tol=a.mark_tol, min_on_level=a.mark_min_level, step_m=a.mark_step, ref_m=a.mark_ref,
+                      kerb_m=a.mark_kerb)  # fmt: skip
         why, mst, st = check_markings([element_ij(feats[i]) for i in idx], cls, C, lo, res, Hc, trajectories(), params)
         if a.mark_rules:  # only these rules demote a marking (the others are measured but not applied)
             why = [[r for r in w if r in a.mark_rules] for w in why]
@@ -740,7 +747,7 @@ def main(argv=None):
         set() if a.curb_filter else {"curb_filter", "curb_adjacent", "curb_min_adjacent", "curb_min_first", "curb_wavy"}
     )
     if not a.marking_gate:
-        hide |= {"marking_gate", "mark_tol", "mark_min_level", "mark_step", "mark_ref", "mark_rules"}
+        hide |= {"marking_gate", "mark_tol", "mark_min_level", "mark_step", "mark_ref", "mark_kerb", "mark_rules"}
     if not (a.curb_filter or a.marking_gate):
         hide.add("gt")
     params = {k: v for k, v in vars(a).items() if k not in hide}  # default: as before

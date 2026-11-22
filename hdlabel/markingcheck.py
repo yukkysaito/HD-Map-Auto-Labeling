@@ -11,7 +11,9 @@ tactile blocks or a brick plaza behind a kerb step. Per element (lane_line, stop
                   above the road); cells without LiDAR are unknown and never count against an element
 Rules (an element with fewer than min_known of its cells known, or fewer than min_cells, is not judged):
   off_level  less than min_on_level of the known cells within tol m of the local road plane and the median residual
-             beyond tol (a consistent offset, not scatter)
+             beyond tol (a consistent offset, not scatter); with kerb_m > 0 not for elements with most known cells
+             within kerb_m of curb cells: edge lines along a kerb read a few cm off (the surface grid mixes the kerb
+             and the gutter into their cells), only `raised` judges them
   raised     median residual above step_m (or below -step_m): the element sits on a ledge / behind a step or in a gap
   cut_off    less than min_on_level of the known cells on the road level and, on more than half of the profiles from
              the nearest trajectory-reachable road cell (within cut_m) to element cells, the ground rises or falls by
@@ -32,7 +34,7 @@ from scipy.ndimage import distance_transform_edt
 from hdlabel.curbcheck import reachable, resample
 
 DEFAULTS = dict(tol=0.04, min_on_level=0.7, step_m=0.07, ref_m=3.0, block_m=4.0, min_known=0.3, min_cells=5,
-                min_ref=20, exempt_m=1.0, min_area=50.0, profiles=30, cut_m=5.0)  # fmt: skip
+                min_ref=20, exempt_m=1.0, min_area=50.0, profiles=30, cut_m=5.0, kerb_m=0.0)  # fmt: skip
 RULES = ("off_level", "raised", "cut_off")
 
 
@@ -78,6 +80,7 @@ def check_markings(elems, cls, C, lo, res, Hc, trajs=(), params=None):
     if p["exempt_m"] > 0 and (cls == C["crosswalk"]).any():
         known &= distance_transform_edt(cls != C["crosswalk"]) * res > p["exempt_m"]
     d_ref, near = distance_transform_edt(~rref, return_indices=True) if rref.any() else (None, None)
+    d_kerb = distance_transform_edt(cls != C["curb"]) * res if p["kerb_m"] > 0 and (cls == C["curb"]).any() else None
     R = int(np.ceil(p["ref_m"] / res))
     blk = max(1, int(round(p["block_m"] / res)))
     shape = np.array(cls.shape)
@@ -116,7 +119,10 @@ def check_markings(elems, cls, C, lo, res, Hc, trajs=(), params=None):
             on = float((np.abs(r) < p["tol"]).mean())
             med = float(np.median(r))
             st.update(on_level=round(on, 3), median_cm=round(100 * med, 1))
-            if on < p["min_on_level"] and abs(med) > p["tol"]:
+            kerb = float((d_kerb[q[:, 0], q[:, 1]] <= p["kerb_m"]).mean()) if d_kerb is not None else 0.0
+            if d_kerb is not None:
+                st["kerb"] = round(kerb, 3)
+            if on < p["min_on_level"] and abs(med) > p["tol"] and kerb < 0.5:
                 why.append("off_level")
             if abs(med) > p["step_m"]:
                 why.append("raised")

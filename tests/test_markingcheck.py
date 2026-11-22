@@ -95,3 +95,19 @@ def test_config_default_off_and_variant():
     assert args[0] == "--marking-gate" and "--gt" not in args  # the curb filter of the variant passes --gt
     area.cfg["markings"]["curb_filter"]["enabled"] = False
     assert marking_gate_args(area, ["a/gt.npy"])[:3] == ["--marking-gate", "--gt", "a/gt.npy"]
+
+
+def test_edge_line_along_the_kerb_is_judged_only_by_the_step():
+    """an edge line next to the kerb reads ~5 cm above the road plane (kerb and gutter mixed into its surface cells):
+    off_level with kerb_m = 0, kept with kerb_m > 0; the tactile blocks behind the kerb step stay raised."""
+    cls, H, trajs = street()
+    cls[:, 97:100] = C["marking"]  # edge line at y 9.7..10 along the kerb
+    H[:, 48:50] += 0.05  # its cells read 5 cm high
+    Hc = markingcheck.upsample(H, 2, cls.shape)
+    edge = np.c_[np.repeat(np.arange(300, 400), 3), np.tile([97, 98, 99], 100)]
+    tactile = box(50, 150, 110, 115)
+    why, st, _ = markingcheck.check_markings([edge, tactile], cls, C, LO, RES, Hc, trajs)
+    assert why[0] == ["off_level"] and "kerb" not in st[0]
+    why, st, _ = markingcheck.check_markings([edge, tactile], cls, C, LO, RES, Hc, trajs, dict(kerb_m=0.5))
+    assert why[0] == [] and st[0]["kerb"] == 1.0
+    assert "raised" in why[1]
