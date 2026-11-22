@@ -13,6 +13,10 @@ detail     every output cell samples the stride-2 features at the ground plane, 
            together with log(ground footprint of a pixel); a small decoder adds a residual to the upsampled context
            logits - near the cameras it sharpens edges and thin lines, far away (footprint >> cell) it learns to
            trust the context
+temporal   (history > 1) earlier frames are lifted into the current ego frame through the ego motion, mixed like the
+           current frame and fused oldest -> current by a convolutional GRU: the gates learn per cell which frame to
+           trust (an earlier view is farther from cells ahead, closer to cells behind, and sees what a vehicle hides
+           now). Only past frames: the model stays usable online. The image encoder runs without gradient on them
 known      output channel 0 is trained as "cell unlabelled": the model can abstain (metrics.predict)
 """
 
@@ -94,6 +98,17 @@ class ImageEncoder(nn.Module):
         return s8, s2
 
 
+class ConvGRU(nn.Module):
+    def __init__(self, c):
+        super().__init__()
+        self.zr = nn.Conv2d(2 * c, 2 * c, 3, padding=1)
+        self.h = nn.Conv2d(2 * c, c, 3, padding=1)
+
+    def forward(self, x, h):
+        z, r = torch.sigmoid(self.zr(torch.cat([x, h], 1))).chunk(2, 1)
+        return (1 - z) * h + z * torch.tanh(self.h(torch.cat([x, r * h], 1)))
+
+
 class BEVUNet(nn.Module):
     def __init__(self, cin, c=128):
         super().__init__()
@@ -121,8 +136,8 @@ class BEVSegNet(nn.Module):
                            heights=list(heights), vit=vit, jitter=jitter, history=history)  # fmt: skip
         self.size, self.heights, self.jitter, self.history = tuple(image_size), list(heights), jitter, history
         self.enc = ImageEncoder(vit)
-        cin = 128 * len(self.heights) * (2 if history > 1 else 1) + 2
-        self.hmix = nn.Sequential(nn.Conv2d(cin, 128, 1), gn(128), nn.ReLU())
+        self.hmix = nn.Sequential(nn.Conv2d(128 * len(self.heights) + 2, 128, 1), gn(128), nn.ReLU())
+        self.gru = ConvGRU(128) if history > 1 else None
         self.bev = BEVUNet(128)
         self.ctx_head = nn.Conv2d(128, NC, 1)
         self.register_buffer("Pc", grid(bev, cell), persistent=False)
@@ -174,27 +189,29 @@ class BEVSegNet(nn.Module):
 
         X, Y = self.Pc.shape[:2]
         with torch.autocast("cuda", enabled=False):  # geometry in float32
-            G, Z, OK = project(lift(self.Pc, self.heights, A), Tcf, Tbc, K, cm, self.size)
-        g, z, ok = G[:, :, 0], Z[:, :, 0], OK[:, :, 0]  # [B, C, H*X*Y, ...]
-        wt = 1 / z.clamp(min=1)
-        lifted = self.sample(f8, g, ok, wt).view(B, -1, len(self.heights), X, Y).flatten(1, 2)
-        if self.history > 1:  # earlier frames, through the ego motion: mean of their lifted features (no gradient)
-            with torch.no_grad():
-                acc = n = 0
-                for t in range(1, frames.shape[1]):
-                    ft = self.enc(self.normalise(frames[:, t]).flatten(0, 1))[0]
-                    ft = ft.view(B, C, *ft.shape[1:])
-                    okt = OK[:, :, t]
-                    acc = acc + self.sample(ft, G[:, :, t], okt, 1 / Z[:, :, t].clamp(min=1)) * okt.any(1)[:, None]
-                    n = n + okt.any(1)[:, None]
-                past = (acc / n.clamp(min=1)).view(B, -1, len(self.heights), X, Y).flatten(1, 2)
-            lifted = torch.cat([lifted, past.to(lifted.dtype)], 1)
+            G, Z, OK = project(lift(self.Pc, self.heights, A), Tcf, Tbc, K, cm, self.size)  # [B, C, T, H*X*Y, ...]
         i0 = self.heights.index(0.0) if 0.0 in self.heights else 0
         ground = slice(i0 * X * Y, (i0 + 1) * X * Y)
-        z0, ok0 = z[:, :, ground], ok[:, :, ground]
-        self.vis_depth = torch.where(ok0, z0, torch.inf).amin(1).view(B, X, Y)
-        geo = torch.stack([ok0.float().mean(1), torch.log(self.vis_depth.clamp(1, 200)).flatten(1) / 5], 1)
-        h = self.bev(self.hmix(torch.cat([lifted, geo.view(B, 2, X, Y).to(lifted.dtype)], 1)))
+
+        def frame(f8, t):
+            """BEV features of frame t (lifted at every height, with its view geometry) -> [B, 128, X, Y]; also the
+            depth of the closest camera that sees each ground cell."""
+            g, z, ok = G[:, :, t], Z[:, :, t], OK[:, :, t]
+            lifted = self.sample(f8, g, ok, 1 / z.clamp(min=1)).view(B, -1, len(self.heights), X, Y).flatten(1, 2)
+            z0, ok0 = z[:, :, ground], ok[:, :, ground]
+            vis = torch.where(ok0, z0, torch.inf).amin(1).view(B, X, Y)
+            geo = torch.stack([ok0.float().mean(1), torch.log(vis.clamp(1, 200)).flatten(1) / 5], 1)
+            return self.hmix(torch.cat([lifted, geo.view(B, 2, X, Y).to(lifted.dtype)], 1)), vis
+
+        m, self.vis_depth = frame(f8, 0)
+        if self.gru is not None:
+            h = torch.zeros_like(m)
+            for t in range(frames.shape[1] - 1, 0, -1):  # oldest first
+                with torch.no_grad():
+                    ft = self.enc(self.normalise(frames[:, t]).flatten(0, 1))[0]
+                h = self.gru(frame(ft.view(B, C, *ft.shape[1:]), t)[0], h)
+            m = self.gru(m, h)
+        h = self.bev(m)
         ctx = self.ctx_head(h)
         if not self.out_res:
             self.ctx_logits = None

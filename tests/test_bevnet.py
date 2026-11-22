@@ -82,3 +82,16 @@ def test_near_boundary_marks_both_sides_of_a_class_edge_only():
     out, w = torch.randn(1, NC, 6, 6), torch.ones(NC)
     w[0] = 0
     assert torch.isclose(seg_loss(out, y, w), seg_loss(out, y, w, edge=1e-9))  # same normalisation as plain CE
+
+
+def test_temporal_fusion_trains_on_past_frames():
+    torch.manual_seed(0)
+    net = BEVSegNet(BEV, 1, SIZE, cell=0.4, out_res=0.1, heights=[0.0, 1.0], vit=None, history=2)
+    x = batch()
+    x["images"] = x["images"].repeat(1, 2, 1, 1, 1, 1)
+    back = torch.eye(4)
+    back[0, 3] = -1.0  # the earlier frame was taken 1 m behind
+    x["T_cur_frame"] = torch.stack([torch.eye(4), back])[None, :, None]
+    out = net(x)
+    seg_loss(out, downsample(x["bev_cls"], net.f), torch.ones(NC)).backward()
+    assert out.shape == (1, NC, 160, 64) and net.gru.zr.weight.grad.abs().sum() > 0
