@@ -208,7 +208,7 @@ tools:
             - wavy
           marking_gate:
             enabled: true
-    active: curb_shape
+    active: marking_level
     history:
     - date: '2026-11-16'
       active: curb_shape
@@ -274,6 +274,66 @@ tools:
       previous: marking_level
       by: agent
       note: rollback
+    - date: '2026-11-23'
+      active: marking_level
+      previous: curb_shape
+      by: agent
+      note: Height and road-level gate for marking elements after the format-4 relabel
+      evidence:
+        experiment: marking-level-fmt4
+        gain: 0.05
+        target: marking.fp
+        rows:
+        - metric: marking.recall
+          split: all
+          base: 0.89
+          cand: 0.89
+          better: 0.0
+        - metric: marking.recall
+          split: holdout
+          base: 1.0
+          cand: 1.0
+          better: 0.0
+        - metric: marking.fp
+          split: all
+          base: 0.97
+          cand: 0.92
+          better: 0.05
+        - metric: marking.fp
+          split: holdout
+          base: 1.0
+          cand: 0.83
+          better: 0.17
+        - metric: curb.recall
+          split: all
+          base: 0.9
+          cand: 0.9
+          better: 0.0
+        - metric: curb.recall
+          split: holdout
+          base: 0.63
+          cand: 0.63
+          better: 0.0
+        - metric: curb.fp
+          split: all
+          base: 0.77
+          cand: 0.77
+          better: 0.0
+        - metric: curb.fp
+          split: holdout
+          base: 0.86
+          cand: 0.86
+          better: 0.0
+        - metric: curb.lidar
+          split: all
+          base: 0.7746
+          cand: 0.7746
+          better: 0.0
+        - metric: curb.lidar
+          split: holdout
+          base: 0.7746
+          cand: 0.7746
+          better: 0.0
   geom_check:
     purpose: verification without cameras - curbs vs LiDAR height steps, vector height vs LiDAR ground
     stage: verify
