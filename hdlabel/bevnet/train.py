@@ -1,8 +1,12 @@
 """Train and evaluate BEVSegNet on an exported dataset.
 
-usage: python -m hdlabel.bevnet.train output/<name>/dataset/dataset.json [--steps 6000] [--tag NAME]
+usage: python -m hdlabel.bevnet.train output/<name>/dataset/dataset.json [more dataset.json ...] [--steps 6000]
+       [--tag NAME]
        -> output/<name>/debug/eval/bevnet<tag>.json (args, curve, val scores), .pt (checkpoint without the frozen
-          ViT weights), _examples.png (label | prediction for 3 val samples)
+          ViT weights), _examples.png (label | prediction for 3 val samples). <name> is the first dataset's.
+
+Several datasets (e.g. areas) train together; val scores are given per dataset (`val`: the first one,
+`val_by_dataset`: all). All datasets must have the same cameras.
 """
 
 from __future__ import annotations
@@ -51,7 +55,7 @@ def examples(net, ds, known, path, n=3):
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("dataset_json")
+    p.add_argument("dataset_json", nargs="+")
     p.add_argument("--steps", type=int, default=6000)
     p.add_argument("--batch", type=int, default=2)
     p.add_argument("--lr", type=float, default=3e-4)
@@ -80,10 +84,13 @@ def main(argv=None):
     np.random.seed(0)
     dev = "cuda"
 
-    bev = dict(json.load(open(a.dataset_json))["bev"], x=a.bev_x, y=a.bev_y, res=a.label_res)
+    bev = dict(json.load(open(a.dataset_json[0]))["bev"], x=a.bev_x, y=a.bev_y, res=a.label_res)
     kw = dict(bev=bev, image_size=tuple(a.image_size), history=a.history)
-    tr = BEVDataset(a.dataset_json, split="train", rot_deg=a.rot, flip=a.flip, **kw)
-    va = BEVDataset(a.dataset_json, split="val", **kw)
+    trs = [BEVDataset(d, split="train", rot_deg=a.rot, flip=a.flip, **kw) for d in a.dataset_json]
+    vas = [BEVDataset(d, split="val", **kw) for d in a.dataset_json]
+    assert all(t.cams == trs[0].cams for t in trs), "datasets with different cameras"
+    tr, va = trs[0], vas[0]
+    train_set = torch.utils.data.ConcatDataset(trs) if len(trs) > 1 else tr
     net = BEVSegNet(
         bev, len(tr.cams), a.image_size, a.cell, a.out_res or None, a.heights, a.vit or None, a.jitter, a.history
     )
@@ -91,18 +98,19 @@ def main(argv=None):
     known = a.known > 0
 
     cnt = torch.zeros(NC)
-    for i in np.linspace(0, len(tr) - 1, 200).astype(int):
-        sid, r = tr.items[i]
-        lab = tr.scene_map(sid).crop(np.array(r["T_map_base"]), bev["x"], bev["y"], bev["res"])[0]
-        cnt += torch.bincount(torch.from_numpy(lab.astype(np.int64)).ravel(), minlength=NC)
+    for t in trs:  # class frequencies of each dataset in proportion to its size
+        for i in np.linspace(0, len(t) - 1, max(1, round(200 * len(t) / len(train_set)))).astype(int):
+            sid, r = t.items[i]
+            lab = t.scene_map(sid).crop(np.array(r["T_map_base"]), bev["x"], bev["y"], bev["res"])[0]
+            cnt += torch.bincount(torch.from_numpy(lab.astype(np.int64)).ravel(), minlength=NC)
     wts = class_weights(cnt).to(dev)
 
     cnn = [q for n, q in net.named_parameters() if q.requires_grad and n.startswith(("enc.stem", "enc.body"))]
     rest = [q for n, q in net.named_parameters() if q.requires_grad and not n.startswith(("enc.stem", "enc.body"))]
     opt = torch.optim.AdamW([dict(params=cnn, lr=a.lr / 3), dict(params=rest, lr=a.lr)], weight_decay=1e-4)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, [a.lr / 3, a.lr], total_steps=a.steps, pct_start=0.05)
-    dl = torch.utils.data.DataLoader(tr, batch_size=a.batch, shuffle=True, num_workers=a.workers, collate_fn=collate,
-                                     drop_last=True, persistent_workers=True, prefetch_factor=2, pin_memory=True)  # fmt: skip
+    dl = torch.utils.data.DataLoader(train_set, batch_size=a.batch, shuffle=True, num_workers=a.workers,
+                                     collate_fn=collate, drop_last=True, persistent_workers=True, prefetch_factor=2, pin_memory=True)  # fmt: skip
     t0, step, losses, curve = time.time(), 0, [], []
     while step < a.steps:
         for x in dl:
@@ -130,12 +138,15 @@ def main(argv=None):
             if step >= a.steps:
                 break
 
-    res = dict(model="bevnet", args=vars(a), train_samples=len(tr), val_samples=len(va),
+    res = dict(model="bevnet", args=vars(a), train_samples=len(train_set), val_samples=len(va),
                minutes_train=round((time.time() - t0) / 60, 1), loss_last50=round(float(np.mean(losses[-50:])), 3),
                curve=curve)  # fmt: skip
     res["val"] = evaluate(net, va, a.val, known)
+    if len(vas) > 1:
+        res["val_by_dataset"] = {d: res["val"] if v is va else evaluate(net, v, a.val, known)
+                                 for d, v in zip(a.dataset_json, vas)}  # fmt: skip
     res["minutes_total"] = round((time.time() - t0) / 60, 1)
-    out = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(a.dataset_json))), "debug", "eval")
+    out = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(a.dataset_json[0]))), "debug", "eval")
     os.makedirs(out, exist_ok=True)
     name = f"{out}/bevnet{a.tag}"
     json.dump(res, open(f"{name}.json", "w"), indent=1)

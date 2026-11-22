@@ -160,6 +160,8 @@ A camera-only BEV segmentation network that shows what the dataset supports (not
 ```
 python -m hdlabel.bevnet.train output/<name>/dataset/dataset.json --tag _mine   # ~70 min on a 12 GB GPU
 python -m hdlabel.bevnet.video output/<name>/debug/eval/bevnet_mine.pt          # videos of the val scenes
+python -m hdlabel.bevnet.evaluate bevnet_mine.pt --dataset <other>/dataset.json --split all   # e.g. an unseen area
 ```
+Several `dataset.json` (e.g. areas) can be given to `train`; it then also reports the val scores of each.
 Scores (`debug/eval/bevnet<tag>.json`) are at the label resolution: IoU per class and a boundary F-score (0.2 m
 tolerance) for markings, crosswalks and curbs.
