@@ -16,7 +16,7 @@ Each item = one sample (qa.ok only) of a scene of output/<name>/dataset/:
                                      VECTOR_CLASSES), vec_mask bool [V] (padding)
   vec_dir     float [V, 3]           arrows: allowed directions, multi-hot over ARROW_DIRECTIONS; arrow points run tail -> tip
 The full-detail elements (lane line painted segments, arrow outlines, polygon rings) are in item_vectors(i).
-split: "train" / "val" (by location, dataset.json); scenes: restrict to these ids. Items are in time order per scene
+split: "train" / "val" / "test" (by location, dataset.json); scenes: restrict to these ids. Items are in time order per scene
 (val scenes are exported at the model cycle, so iterating a scene replays the drive cycle by cycle: eval/online_eval.py).
 """
 

@@ -138,10 +138,11 @@ els = ds.item_vectors(0)  # vectors with all attributes (painted segments of lan
 ## Train / val split
 Drives pass the same places many times, so a random split would make validation too easy. The split is **by
 location**:
-- the map is cut into `split.tile_m` tiles (default 250 m); every 5th tile (fixed hash) is val.
+- the map is cut into `split.tile_m` tiles (default 250 m); the tiles in `split.test_tiles` (`[[ix, iy], ...]`) are a
+  fixed test split, kept out of training and model selection; every 5th other tile (fixed hash) is val.
 - a scene's split is the tile of its route centre.
-- val scenes are sampled like train (`dataset.every_s`) unless `dataset.val_every_s` is set, e.g. 0.1 s = the model
-  cycle: then they can be replayed in time order to evaluate every cycle (`hdlabel/eval/online_eval.py`).
+- val / test scenes are sampled like train (`dataset.every_s`) unless `dataset.val_every_s` is set, e.g. 0.1 s = the
+  model cycle: then they can be replayed in time order to evaluate every cycle (`hdlabel/eval/online_eval.py`).
 
 ## Learnability check (`hdlabel/eval/train_smoke.py`; not model development)
 A small BEV network checks that

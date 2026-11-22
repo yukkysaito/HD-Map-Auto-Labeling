@@ -22,7 +22,7 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("model", help="bevnet*.pt")
     p.add_argument("--dataset", help="dataset.json (default: output/<name>/dataset/dataset.json of the model)")
-    p.add_argument("--split", default="val", choices=["val", "train", "all"])
+    p.add_argument("--split", default="val", choices=["val", "test", "train", "all"])
     p.add_argument("--val", type=int, default=0, help="samples (0: all)")
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     a = p.parse_args(argv)

@@ -136,3 +136,12 @@ def test_class_map_env(tmp_path):
         [sys.executable, "-c", code], env=env, capture_output=True, text=True, check=True
     ).stdout.split()
     assert out == ["0", "1", "5", "6", "6"]  # road, marking, offroad; vertical and unknown ids -> other (never voted)
+
+
+def test_split_by_location_with_fixed_test_tiles(tmp_path):
+    np.save(tmp_path / "gt.npy", np.array([[0.0, 600.0, 100.0], [1.0, 620.0, 120.0]]))  # route centre in tile (2, 0)
+    area = type("A", (), dict(data=lambda self, d: str(tmp_path), cfg=dict(dataset=dict(split=dict(tile_m=250)))))()
+    s = dict(drive="d", t_range=[0.0, 1.0])
+    assert run.scene_split(area, s)[1] == [2, 0] and run.scene_split(area, s)[0] in ("train", "val")
+    area.cfg["dataset"]["split"]["test_tiles"] = [[2, 0]]
+    assert run.scene_split(area, s) == ("test", [2, 0])

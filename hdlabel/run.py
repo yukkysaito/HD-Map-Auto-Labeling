@@ -656,8 +656,8 @@ def export(area, s, force):
     rv = area.review_file(s["id"])
     bev = ds["bev"]
     every = (
-        (ds.get("val_every_s") or ds["every_s"]) if scene_split(area, s)[0] == "val" else ds["every_s"]
-    )  # val: model cycle
+        (ds.get("val_every_s") or ds["every_s"]) if scene_split(area, s)[0] != "train" else ds["every_s"]
+    )  # val / test: model cycle
     step(
         area,
         f"export_{s['id']}",
@@ -881,13 +881,16 @@ def summarize_qa(area):
 
 
 def scene_split(area, s):
-    """train / val by location: the map is cut into tile_m tiles, every val_every-th tile (stable hash) is validation, so
-    the same place never appears in both (drives repeat routes). Returns (split, tile)."""
+    """train / val / test by location: the map is cut into tile_m tiles, the tiles listed in test_tiles are the fixed
+    test, every val_every-th other tile (stable hash) is validation, so the same place never appears in two splits
+    (drives repeat routes). Returns (split, tile)."""
     sp = area.cfg["dataset"].get("split", {})
     tile, every = sp.get("tile_m", 500), sp.get("val_every", 5)
     tr = np.load(f"{area.data(s['drive'])}/gt.npy")
     tr = tr[(tr[:, 0] >= s["t_range"][0]) & (tr[:, 0] <= s["t_range"][1]), 1:3]
     ix, iy = (int(v) for v in np.floor(tr.mean(0) / tile))
+    if [ix, iy] in [list(t) for t in sp.get("test_tiles") or []]:
+        return "test", [ix, iy]
     return ("val" if ((ix * 73856093) ^ (iy * 19349663)) % every == 0 else "train"), [ix, iy]
 
 
@@ -938,7 +941,7 @@ def dataset_index(area):
                 plan=json.load(open(pf)) if os.path.exists(pf) else None,
             )
         )
-    n = {k: sum(o["qa_ok"] for o in out if o["split"] == k) for k in ("train", "val")}
+    n = {k: sum(o["qa_ok"] for o in out if o["split"] == k) for k in ("train", "val", "test")}
     idx = dict(
         format=4,
         name=area.name,

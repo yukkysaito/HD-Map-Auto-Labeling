@@ -26,7 +26,7 @@ def main(argv=None):
     bev = idx["bev"]
     out = {}
     xs = grid(bev["x"], bev["y"], bev["res"])[0][:, 0]
-    for split in ("train", "val"):
+    for split in ("train", "val", "test"):
         cls_n = np.zeros(len(CLASSES))
         unobs_by_x = {}
         vec = Counter()
