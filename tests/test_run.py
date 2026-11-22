@@ -129,10 +129,10 @@ def test_class_map_env(tmp_path):
     import subprocess
     import sys
 
-    cm = dict(road=[1], marking=[2], crosswalk=[3], manhole=[4], curb=[5], sidewalk=[6], offroad=[7, 8], vertical=[8])
+    cm = dict(road=[1], marking=[2], crosswalk=[3], curb=[5], sidewalk=[6], offroad=[7, 8], vertical=[8])
     env = dict(os.environ, HDLABEL_CLASS_MAP=json.dumps(cm), PYTHONPATH=run.ROOT)
     code = "from hdlabel.mapproj import seg_lut; l = seg_lut(); print(l[1], l[2], l[7], l[8], l[13])"
     out = subprocess.run(
         [sys.executable, "-c", code], env=env, capture_output=True, text=True, check=True
     ).stdout.split()
-    assert out == ["0", "1", "6", "7", "7"]  # road, marking, offroad; vertical and unknown ids -> other (never voted)
+    assert out == ["0", "1", "5", "6", "6"]  # road, marking, offroad; vertical and unknown ids -> other (never voted)

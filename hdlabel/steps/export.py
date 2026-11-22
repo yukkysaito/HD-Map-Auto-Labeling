@@ -201,7 +201,7 @@ def main(argv=None):
         )
     json.dump(
         dict(
-            format=3,
+            format=4,
             drive=os.path.basename(a.data.rstrip("/")),
             bags=[os.path.basename(b) for b in ing.get("bags", [])],
             t_range=[int(t0), int(t1)],

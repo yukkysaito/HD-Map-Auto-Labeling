@@ -45,7 +45,7 @@ tools:
     active: default
     history: []
   segment:
-    purpose: per-pixel classes of every keyframe (road, marking, crosswalk, manhole, curb, sidewalk, offroad, vertical)
+    purpose: per-pixel classes of every keyframe (road, marking, crosswalk, curb, sidewalk, offroad, vertical)
     stage: drive
     script: hdlabel/steps/segment.py
     writes:

@@ -149,7 +149,7 @@ def main(argv=None):
     cv2.imwrite(f"{a.out}/geom_check.jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 88])
 
     # ---- PCDs: label cells and vectors in 3D (map frame)
-    fine = np.isin(cls, [CLASSES.index(c) for c in ("marking", "crosswalk", "curb", "manhole")])
+    fine = np.isin(cls, [CLASSES.index(c) for c in ("marking", "crosswalk", "curb")])
     coarse = (cls > 0) & ~fine
     sub = np.zeros_like(coarse)
     sub[::3, ::3] = coarse[::3, ::3]

@@ -8,7 +8,7 @@ from hdlabel import curbcheck
 from hdlabel.agents import registry
 from hdlabel.run import curb_args, load_config
 
-G = ["road", "marking", "crosswalk", "manhole", "curb", "sidewalk", "offroad", "other"]
+G = ["road", "marking", "crosswalk", "curb", "sidewalk", "offroad", "other"]
 C = {g: i + 1 for i, g in enumerate(G)}
 RES = 0.1
 LO = np.array([0.0, 0.0])

@@ -24,7 +24,7 @@ Elements (3D, map frame; z from the map surface):
                               trajectories by hdlabel/markingcheck.py (ledge, rail base, raised sidewalk, plaza behind a
                               kerb step); props.candidate_of = its kind, props.marking_check = the failed rules,
                               props.marking_level = the measurements. Not a marking for training / the benchmark
-  drivable_area   Polygon     road + marking + crosswalk + manhole (holes = islands), observed cells only
+  drivable_area   Polygon     road + marking + crosswalk (holes = islands), observed cells only
   road_boundary   LineString  outline of the drivable area, split into runs; props.observed = the outside is an observed
                               non-drivable class (curb, sidewalk, off-road) -> a real boundary; false -> edge of the observed
                               area (unknown, do not train it as a boundary)
@@ -149,7 +149,7 @@ def main(argv=None):
     G = [str(g) for g in m["groups"]]
     C = {g: G.index(g) + 1 for g in G}
     observed = cls > 0
-    DRIVABLE = np.isin(cls, [C["road"], C["marking"], C["crosswalk"], C["manhole"]])
+    DRIVABLE = np.isin(cls, [C["road"], C["marking"], C["crosswalk"]])
     OFFROAD = np.isin(cls, [C["curb"], C["sidewalk"], C["offroad"]])
     N8 = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
 

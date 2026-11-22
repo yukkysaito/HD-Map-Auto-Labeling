@@ -36,7 +36,7 @@ hand, e.g. to set the kind / type of an element, which the agent review does not
         Put it at the path shown on the page (step 3 below).
      Unsaved work is kept in the browser and restored when the page is opened again.
    - `sample_<k>.jpg`: labels drawn on every camera image + the BEV (raster + vectors).
-     Overlay colours: road green, lane marking red, crosswalk magenta, curb blue, sidewalk yellow, manhole cyan.
+     Overlay colours: road green, lane marking red, crosswalk magenta, curb blue, sidewalk yellow.
      Labels are drawn where rays meet the road surface, so they also appear on cars and buildings (occlusion is not
      modelled). That is not an error.
    - `map.jpg`: ortho image of the scene + vectors + element numbers + 10 m grid (map coordinates, labelled every 50 m).

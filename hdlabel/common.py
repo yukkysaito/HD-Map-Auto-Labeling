@@ -19,10 +19,9 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 # (the default model); another model's ids come from the config `segmentation.class_map` (run.py passes it to the steps
 # as $HDLABEL_CLASS_MAP, JSON {group: [ids], ..., "vertical": [ids]}).
 GROUPS = {
-    "road": [13, 14, 7, 10, 36, 43],  # Road, Service Lane, Bike Lane, Parking, Catch Basin, Pothole
+    "road": [13, 14, 7, 10, 36, 43, 41],  # Road, Service Lane, Bike Lane, Parking, Catch Basin, Pothole, Manhole
     "marking": [24],  # Lane Marking - General
     "crosswalk": [23, 8],  # Lane Marking - Crosswalk, Crosswalk - Plain
-    "manhole": [41],
     "curb": [2, 9],  # Curb, Curb Cut
     "sidewalk": [15, 11],  # Sidewalk, Pedestrian Area
     "offroad": [29, 30, 3, 4, 5, 6, 17, 16, 12, 26],
@@ -32,18 +31,19 @@ GROUPS = {
 VERTICAL = [3, 4, 5, 6, 16, 17, 30]
 if os.environ.get("HDLABEL_CLASS_MAP"):
     _cm = json.loads(os.environ["HDLABEL_CLASS_MAP"])
+    if "manhole" in _cm:  # before format 4 manholes were a class; they are road now
+        _cm["road"] = list(_cm.get("road", [])) + list(_cm.pop("manhole"))
     if set(_cm) - {"vertical"} != set(GROUPS):
         raise ValueError(f"segmentation.class_map needs exactly the groups {list(GROUPS)} (+ optional vertical)")
     GROUPS = {g: list(_cm[g]) for g in GROUPS}
     VERTICAL = list(_cm.get("vertical", []))
-CLASSES = ["unobserved"] + list(GROUPS) + ["other"]  # raster label ids 0..8
+CLASSES = ["unobserved"] + list(GROUPS) + ["other"]  # raster label ids 0..7
 PALETTE = np.array(
     [
         [0, 0, 0],
         [90, 90, 90],
         [255, 255, 255],
         [255, 220, 0],
-        [0, 120, 255],
         [200, 60, 60],
         [80, 160, 80],
         [60, 110, 40],

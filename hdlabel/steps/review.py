@@ -3,7 +3,7 @@
   OUT/sample_<k>.jpg   for a few samples: every camera image with the scene labels rendered into it (ray / surface
                        intersection; occluders are not modelled, so labels also paint over cars) + the BEV raster with
                        the sample vectors. Overlay colours: road green tint, marking red, crosswalk magenta, curb blue,
-                       sidewalk yellow, manhole cyan; vertical structures / unobserved: none.
+                       sidewalk yellow; vertical structures / unobserved: none.
   OUT/map.jpg          ortho image of the scene with the vectors, element ids and a 10 m grid (map coordinates)
   OUT/elements.json    id -> kind, properties, a point on the element (map frame) for writing fixes
   OUT/arrows.jpg       (written by arrows.py) arrows found (sharp ground patch + outline, tip up, driver's left on the
@@ -61,7 +61,6 @@ def main(argv=None):
         ("crosswalk", (255, 0, 255), 0.6),
         ("curb", (0, 80, 255), 0.7),
         ("sidewalk", (255, 220, 0), 0.4),
-        ("manhole", (0, 255, 255), 0.6),
     ):
         OV[CLASSES.index(name)] = col
         W[CLASSES.index(name)] = w

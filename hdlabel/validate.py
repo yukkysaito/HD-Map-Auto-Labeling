@@ -18,7 +18,7 @@ import sys
 import numpy as np
 from PIL import Image
 
-SUPPORTED = (3,)
+SUPPORTED = (4,)
 
 
 class Report:

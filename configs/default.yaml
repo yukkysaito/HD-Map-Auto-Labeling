@@ -69,7 +69,7 @@ segmentation:
   model: facebook/mask2former-swin-large-mapillary-vistas-semantic  # a Hugging Face Mask2Former checkpoint (README: license!),
                                                                      # or color_stub (synthetic data)
   class_map: null             # null: Mapillary Vistas ids (hdlabel/common.py GROUPS). Another model: its class ids per group,
-                              # {road: [..], marking: [..], crosswalk: [..], manhole: [..], curb: [..], sidewalk: [..],
+                              # {road: [..], marking: [..], crosswalk: [..], curb: [..], sidewalk: [..],
                               #  offroad: [..], vertical: [..]} (vertical = walls, fences, vegetation: never voted on the ground)
 scenes:  {length_m: 300, context_m: 150, corridor_m: 40}  # scene = a drive inside one cell of a fixed length_m map grid; labels
                                                           # cover that route +- context_m (the BEV ahead / behind) + corridor_m;

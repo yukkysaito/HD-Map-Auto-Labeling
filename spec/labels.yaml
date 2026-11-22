@@ -93,7 +93,7 @@ kinds:
   drivable_area:
     group: none
     geometry: Polygon
-    definition: road + marking + crosswalk + manhole cells that were observed (holes = islands).
+    definition: road + marking + crosswalk cells that were observed (holes = islands). Manhole covers are road.
     attributes: {area: m2}
   road_boundary:
     group: none

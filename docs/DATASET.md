@@ -1,4 +1,4 @@
-# Training data format (format 3)
+# Training data format (format 4)
 
 Target model: multi-camera, multi-frame input; every cycle it outputs the HD map around the vehicle (200-300 m),
 as a raster (BEV segmentation) or as vectors (MapTR style). Both kinds of ground truth come from the same labels.
@@ -70,14 +70,13 @@ Cropped with `SceneMap.crop(T_map_base, x, y, res)` in `hdlabel/bev.py`.
 | id | class | meaning |
 |---|---|---|
 | 0 | unobserved | seen by no camera / off the road surface (**excluded from the loss**) |
-| 1 | road | roadway |
+| 1 | road | roadway (manhole covers included) |
 | 2 | marking | lane lines, stop lines, arrows etc. (road markings except crosswalks). Arrows are redrawn with the outline measured in a sharp single frame |
 | 3 | crosswalk | crosswalk |
-| 4 | manhole | manhole |
-| 5 | curb | curb |
-| 6 | sidewalk | sidewalk |
-| 7 | offroad | vegetation, ground and other non-road surfaces |
-| 8 | other | (does not occur on the road surface) |
+| 4 | curb | curb |
+| 5 | sidewalk | sidewalk |
+| 6 | offroad | vegetation, ground and other non-road surfaces |
+| 7 | other | (does not occur on the road surface) |
 
 `cls[i, j]` of `map.npz` is at map `x = origin.x + lo.x + (i + 0.5) * res`, `y = origin.y + lo.y + (j + 0.5) * res`.
 **The raster only contains the road level the vehicle drives on**: the ground road when driving under an overpass,

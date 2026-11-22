@@ -22,7 +22,7 @@ import torch.nn.functional as F
 from .common import CLASSES, GROUPS, VERTICAL, Extrinsic, PoseInterp, stamps_of
 from .common import device as default_device
 
-GROUND_GROUPS = ["road", "marking", "crosswalk", "manhole", "curb", "sidewalk", "offroad"]
+GROUND_GROUPS = ["road", "marking", "crosswalk", "curb", "sidewalk", "offroad"]
 NG = len(GROUPS) + 1  # + other (never voted on the ground)
 
 

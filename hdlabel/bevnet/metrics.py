@@ -62,12 +62,11 @@ class Scores:
 
     def result(self) -> dict:
         iou = {CLASSES[c]: round(float(self.inter[c] / self.union[c].clamp(min=1)), 3) for c in range(1, NC - 1)}
-        main = [v for k, v in iou.items() if k != "manhole"]
         bf = {}
         for k, (tp, n_p, tl, n_l) in self.bf.items():
             p, r = float(tp / max(n_p, 1)), float(tl / max(n_l, 1))
             bf[k] = round(2 * p * r / max(p + r, 1e-9), 3)
-        return dict(iou=iou, miou=round(float(np.mean(main)), 4), boundary_f=bf,
+        return dict(iou=iou, miou=round(float(np.mean(list(iou.values()))), 4), boundary_f=bf,
                     known_iou=round(float(self.known[0] / self.known[1].clamp(min=1)), 3))  # fmt: skip
 
 

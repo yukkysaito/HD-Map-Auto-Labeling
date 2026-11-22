@@ -3,7 +3,7 @@
 False markings from the segmentation lie on something else: a ledge or rail base above the road, a raised sidewalk with
 tactile blocks or a brick plaza behind a kerb step. Per element (lane_line, stop_line, marking_area, arrow outline) its
 0.1 m cells are compared with the LiDAR ground height Hc (nan = no LiDAR ground there):
-  reference road  road / manhole cells with LiDAR ground (the local plane); for the step profiles only those of the
+  reference road  road cells with LiDAR ground (the local plane); for the step profiles only those of the
                   drivable regions reachable from the trajectories (curbcheck.reachable; without a trajectory: all)
   local plane     per 4 m block of the element, a robust plane fitted to the reference road cells within ref_m of the
                   block's cells (slopes and camber are followed); residual = cell height - plane
@@ -43,9 +43,9 @@ def upsample(H: np.ndarray, k: int, shape) -> np.ndarray:
 
 
 def reference_road(cls, C, Hc, lo, res, trajs=(), min_area=50.0):
-    """-> (road / manhole cells with LiDAR ground, those of the drivable regions reachable from the trajectories)."""
+    """-> (road cells with LiDAR ground, those of the drivable regions reachable from the trajectories)."""
     known = np.isfinite(Hc)
-    road = np.isin(cls, [C["road"], C["manhole"]]) & known
+    road = (cls == C["road"]) & known
     trajs = [np.asarray(t, float) for t in trajs if len(t) >= 2]
     if not trajs:
         return road, road

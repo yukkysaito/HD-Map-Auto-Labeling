@@ -6,7 +6,7 @@ failed rules (vectorize.py turns it into a curb_candidate):
   not_road_adjacent  less than min_adjacent of its length is ON THE ROAD EDGE: within adj_m of the reachable road
                      going only through curb (or unobserved) cells - a planter / lawn border behind a sidewalk, hedge
                      or verge strip, a wall base or a piece on the sidewalk at bollards / trees is not. Reachable road
-                     = road, marking, crosswalk, manhole cells (limited to the LiDAR road surface) of the connected
+                     = road, marking, crosswalk cells (limited to the LiDAR road surface) of the connected
                      regions of >= min_area m2 within reach_m of the trajectories of all drives (so the opposite
                      carriageway across a median and side streets count, road-coloured patches on a plaza do not).
   not_first_edge     rays cast sideways from the trajectories (every ray_step m, up to ray_m) give the points where
@@ -65,7 +65,7 @@ def shape_reasons(xy: np.ndarray, p: dict) -> list[str]:
 def reachable(cls, C, seeds_ij, res, surface=None, reach_m=15.0, min_area=50.0):
     """drivable cells (closed over 0.2 m gaps, limited to the surface mask if given) of the connected regions of at
     least min_area m2 that come within reach_m of a seed cell."""
-    dr = np.isin(cls, [C["road"], C["marking"], C["crosswalk"], C["manhole"]]).astype(np.uint8)
+    dr = np.isin(cls, [C["road"], C["marking"], C["crosswalk"]]).astype(np.uint8)
     dr = cv2.morphologyEx(dr, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
     if surface is not None:
         dr &= surface.astype(np.uint8)
