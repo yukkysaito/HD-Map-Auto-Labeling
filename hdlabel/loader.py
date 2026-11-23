@@ -14,6 +14,8 @@ Each item = one sample (qa.ok only) of a scene of output/<name>/dataset/:
   bev_height  float [nx, ny]         road surface z in base_link (NaN = none)
   bev_level   uint8 [nx, ny]         other road levels at the cell (<scene>/levels.npz, optional): bit 1 = a level above
                                      (overpass, elevated road, enclosure, tunnel ceiling), bit 2 = a level below; 0 without
+  bev_level_dz half [2, nx, ny]      dz (m) of that level above (> 0, channel 0) / below (< 0, channel 1) the ego surface
+                                     (NaN = none, all NaN without levels.npz)
   multilevel  float []               share of the crop's cells with another level (NaN without levels.npz); a sample is
                                      multilevel when it is >= MULTILEVEL
   vec_pts     float [V, P, 3]        vector instances as P equally spaced points (base_link); vec_cls long [V] (index into
@@ -121,16 +123,19 @@ class HDMapDataset(torch.utils.data.Dataset):
         return self._maps[sid]
 
     def level_crop(self, sid, T: np.ndarray) -> dict:
-        """bev_level / multilevel (module doc) of the BEV crop of pose T in scene sid."""
+        """bev_level / bev_level_dz / multilevel (module doc) of the BEV crop of pose T in scene sid."""
         if sid not in self._levels:
             f = f"{self.scenes[sid]['dir']}/levels.npz"
             self._levels[sid] = Levels(f) if os.path.exists(f) else None
         lv, b = self._levels[sid], self.bev
         if lv is None:
             n = grid(b["x"], b["y"], b["res"])[0].shape
-            return dict(bev_level=torch.zeros(n, dtype=torch.uint8), multilevel=torch.tensor(float("nan")))
-        m = lv.crop(self.scene_map(sid), T, b["x"], b["y"], b["res"])
-        return dict(bev_level=torch.from_numpy(m), multilevel=torch.tensor(float((m > 0).mean())))
+            dz = np.full((2, *n), np.nan, np.float16)
+        else:
+            dz = lv.crop_dz(self.scene_map(sid), T, b["x"], b["y"], b["res"])
+        m = Levels.bits(dz)
+        share = float((m > 0).mean()) if lv is not None else float("nan")
+        return dict(bev_level=torch.from_numpy(m), bev_level_dz=torch.from_numpy(dz), multilevel=torch.tensor(share))
 
     def item_vectors(self, i) -> list[dict]:
         """all vector elements of item i in base_link, clipped to the BEV range, full detail (bev.SceneMap.vectors)."""

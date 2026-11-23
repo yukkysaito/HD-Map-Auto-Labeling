@@ -23,7 +23,7 @@ import torch
 from hdlabel.common import CLASSES, PALETTE
 
 from .data import NC, BEVDataset, collate, downsample
-from .losses import boost_weights, class_weights, height_loss, seg_loss
+from .losses import boost_weights, class_weights, height_loss, level_dz_loss, level_loss, seg_loss
 from .metrics import VIS_DEPTH, evaluate, predict
 from .model import BEVSegNet
 
@@ -102,12 +102,26 @@ def main(argv=None):
     p.add_argument(
         "--height", type=float, default=0.0, help="weight of the auxiliary road surface height loss (0: no head)"
     )
+    p.add_argument(
+        "--level",
+        type=float,
+        default=0.0,
+        help="weight of the auxiliary other-road-level head (level above / below, BCE per bit; needs levels.npz; 0: no head)",
+    )
+    p.add_argument(
+        "--height-levels",
+        type=float,
+        default=0.0,
+        help="weight of the height offset of the other level above / below (extends the --height head; needs levels.npz)",
+    )
     p.add_argument("--cnn-lr", type=float, default=1 / 3, help="lr factor of the trainable image CNN (0: frozen)")
     p.add_argument("--still-every", type=float, default=0.0, help="train: one sample per N s while the vehicle stands")
     p.add_argument("--seed", type=int, default=0, help="other seeds measure the run-to-run spread of a result")
     p.add_argument("--tag", default="")
     a = p.parse_args(argv)
     boost = parse_boost(a.class_boost)
+    if a.height_levels and not a.height:
+        raise SystemExit("--height-levels extends the height head: needs --height > 0")
     torch.manual_seed(a.seed)
     np.random.seed(a.seed)
     dev = "cuda"
@@ -121,6 +135,11 @@ def main(argv=None):
     vas = [BEVDataset(d, split="val", **kw) for d in a.dataset_json]
     assert all(t.cams == trs[0].cams for t in trs), "datasets with different cameras"
     tr, va = trs[0], vas[0]
+    if a.level or a.height_levels:
+        n = sum(os.path.exists(f"{s['dir']}/levels.npz") for t in trs for s in t.scenes.values())
+        if not n:
+            raise SystemExit("--level / --height-levels: no train scene has levels.npz (python -m hdlabel.levels)")
+        print(f"levels.npz in {n} of {sum(len(t.scenes) for t in trs)} train scenes", flush=True)
     train_set = torch.utils.data.ConcatDataset(trs) if len(trs) > 1 else tr
     net = BEVSegNet(
         bev,
@@ -133,6 +152,8 @@ def main(argv=None):
         a.jitter,
         a.history,
         height_head=a.height > 0,
+        level_head=a.level > 0,
+        height_levels=a.height_levels > 0,
     )
     net = net.to(dev)
     known = a.known > 0
@@ -166,6 +187,10 @@ def main(argv=None):
                 loss = loss + a.aux * seg_loss(net.ctx_logits, downsample(x["bev_cls"], net.fc).to(dev), wts)
             if "height" in net.aux:
                 loss = loss + a.height * height_loss(net.aux["height"], x["bev_height"].to(dev), net.fc)
+            if "level" in net.aux:
+                loss = loss + a.level * level_loss(net.aux["level"], x["bev_level"], x["multilevel"], net.fc)
+            if "level_dz" in net.aux:
+                loss = loss + a.height_levels * level_dz_loss(net.aux["level_dz"], x["bev_level_dz"], net.fc)
             opt.zero_grad(set_to_none=True)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(net.parameters(), 5.0)

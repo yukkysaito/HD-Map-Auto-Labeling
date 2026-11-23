@@ -90,6 +90,33 @@ def height_loss(pred: torch.Tensor, height: torch.Tensor, f: int) -> torch.Tenso
     return F.smooth_l1_loss(pred[ok], y[ok], beta=0.1)
 
 
+def level_bits(level: torch.Tensor, f: int) -> torch.Tensor:
+    """bev_level [B, X*f, Y*f] (uint8, bit 1 above, bit 2 below) -> float [B, 2, X, Y]: share of each f x f block with
+    another level above / below."""
+    b = torch.stack([(level & 1) > 0, (level & 2) > 0], 1).float()
+    return F.avg_pool2d(b, f) if f > 1 else b
+
+
+def level_loss(logits: torch.Tensor, level: torch.Tensor, multilevel: torch.Tensor, f: int) -> torch.Tensor:
+    """BCE per bit of the level head [B, 2, X, Y] (logits: another level above, below) against bev_level [B, X*f, Y*f]
+    (block shares as soft targets), over the samples whose scene has levels.npz (multilevel finite)."""
+    ok = torch.isfinite(multilevel.to(logits.device))
+    if not ok.any():
+        return logits.sum() * 0
+    y = level_bits(level.to(logits.device), f)
+    return F.binary_cross_entropy_with_logits(logits[ok], y[ok])
+
+
+def level_dz_loss(pred: torch.Tensor, dz: torch.Tensor, f: int) -> torch.Tensor:
+    """smooth L1 (m) of the predicted height offset of the other level above / below [B, 2, X, Y] against bev_level_dz
+    [B, 2, X*f, Y*f] (NaN = no such level), over the cells that have one."""
+    y = block_mean(dz.flatten(0, 1).to(pred.device).float(), f).view(pred.shape)
+    ok = torch.isfinite(y)
+    if not ok.any():
+        return pred.sum() * 0
+    return F.smooth_l1_loss(pred[ok], y[ok], beta=0.1)
+
+
 def seg_loss(out, y, weight, lovasz=0.0, known=0.0, edge=0.0, edge_r=2, road_edge=0.0, road_edge_r=3, surface=0.0):
     """cross entropy (+ Lovasz) over the classes; with known > 0 channel 0 learns "cell unlabelled" (BCE). edge > 0
     weights the cross entropy of the cells near a class boundary (1 + edge): thin lines and edges are few cells.

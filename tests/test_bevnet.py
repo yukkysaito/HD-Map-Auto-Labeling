@@ -164,3 +164,53 @@ def test_road_edge_boundary_f():
         sc.add(pr, y)
         bf.append(sc.result()["boundary_f"]["road_edge"])
     assert bf[0] == bf[1] == 1.0 and bf[2] == 0.5
+
+
+def test_level_heads_are_off_by_default_droppable_and_leave_the_map_unchanged(tmp_path):
+    from hdlabel.bevnet.losses import level_dz_loss, level_loss
+    from hdlabel.bevnet.train import load_checkpoint, save_checkpoint
+
+    kw = dict(cell=0.4, out_res=0.1, heights=[0.0, 1.0], vit=None, height_head=True)
+    x = batch()
+    torch.manual_seed(0)
+    base = BEVSegNet(BEV, 1, SIZE, **kw).eval()
+    torch.manual_seed(0)
+    net = BEVSegNet(BEV, 1, SIZE, level_head=True, height_levels=True, **kw).eval()
+    with torch.no_grad():
+        o0, o1 = base(x), net(x)
+    assert torch.equal(o0, o1) and torch.equal(base.aux["height"], net.aux["height"])  # same map, same height
+    assert set(base.aux) == {"height"} and set(net.aux) == {"height", "level", "level_dz"}
+    assert net.aux["level"].shape == net.aux["level_dz"].shape == (1, 2, 40, 16)
+    plain = BEVSegNet(BEV, 1, SIZE, heights=[0.0], vit=None)
+    assert plain.level_head is None and plain.height_levels is None and not plain.config["level_head"]
+
+    # losses: the level head learns where levels.npz exists (multilevel finite), dz only where a level is
+    net.train()
+    net(x)
+    level = torch.zeros(1, 160, 64, dtype=torch.uint8)
+    level[:, :40], level[:, 100:] = 1, 2
+    dz = torch.full((1, 2, 160, 64), float("nan"))
+    dz[:, 0, :40], dz[:, 1, 100:] = 5.0, -7.0
+    lv = level_loss(net.aux["level"], level, torch.tensor([0.4]), net.fc)
+    hz = level_dz_loss(net.aux["level_dz"], dz, net.fc)
+    (lv + hz).backward()
+    assert torch.isfinite(lv) and torch.isfinite(hz) and net.bev.inp[0][0].weight.grad.abs().sum() > 0
+    assert net.level_head[1].weight.grad.abs().sum() > 0 and net.height_levels.weight.grad.abs().sum() > 0
+    assert level_loss(net.aux["level"], level, torch.tensor([float("nan")]), net.fc) == 0  # no levels.npz
+    assert level_dz_loss(net.aux["level_dz"], torch.full_like(dz, float("nan")), net.fc) == 0
+
+    # checkpoints: with the heads, dropped to map only (same map output), and from before the heads existed
+    net.eval()
+    with torch.no_grad():
+        o1 = net(x)  # the training forward updated the batch norm statistics
+    save_checkpoint(net, tmp_path / "heads.pt")
+    loaded, _ = load_checkpoint(tmp_path / "heads.pt")
+    save_checkpoint(net.drop_aux(), tmp_path / "map.pt")
+    assert net.aux == {} and not net.config["level_head"] and not net.config["height_head"]
+    map_only, _ = load_checkpoint(tmp_path / "map.pt")
+    with torch.no_grad():
+        assert torch.equal(loaded(x), o1) and set(loaded.aux) == {"height", "level", "level_dz"}
+        assert torch.equal(map_only(x), o1) and map_only.aux == {}
+    old = {k: v for k, v in plain.config.items() if k not in ("level_head", "height_levels")}
+    torch.save(dict(config=old, state=plain.state_dict()), tmp_path / "old.pt")
+    assert load_checkpoint(tmp_path / "old.pt")[0].level_head is None

@@ -5,7 +5,8 @@ usage: python -m hdlabel.bevnet.evaluate output/<name>/debug/eval/bevnet<tag>.pt
        `--split all` scores every sample, e.g. of an area the model has never seen; `--still-every 2` scores a
        standing vehicle once per 2 s (waits at lights otherwise weigh one view many times); `--by-level` also scores the
        multilevel samples (overpasses, elevated roads, bridges in the crop) and the single-level ones separately, and the
-       cells under / above another level (needs <scene>/levels.npz: config dataset.levels or python -m hdlabel.levels)
+       cells under / above another level (needs <scene>/levels.npz: config dataset.levels or python -m hdlabel.levels);
+       a model with auxiliary heads also gets height_mae (per group too), level_f1, level_dz_mae
 """
 
 from __future__ import annotations

@@ -18,6 +18,10 @@ temporal   (history > 1) earlier frames are lifted into the current ego frame th
            trust (an earlier view is farther from cells ahead, closer to cells behind, and sees what a vehicle hides
            now). Only past frames: the model stays usable online. The image encoder runs without gradient on them
 known      output channel 0 is trained as "cell unlabelled": the model can abstain (metrics.predict)
+aux        optional task heads on the shared BEV feature, named outputs in `aux` (context cells), off by default and
+           droppable at inference (drop_aux): `height` the ego road surface z, `level` logits of another road level
+           above / below each cell (overpass, elevated road; the ground under a bridge), `level_dz` the signed height
+           offset of that level to the ego surface (an extra output of the height head's trunk)
 """
 
 from __future__ import annotations
@@ -130,11 +134,13 @@ class BEVUNet(nn.Module):
 class BEVSegNet(nn.Module):
     def __init__(self, bev: dict, n_cams: int, image_size=(704, 448), cell: float = 0.4, out_res: float | None = 0.1,
                  heights=(-0.5, 0.0, 0.5, 1.0, 2.0), vit: str | None = "facebook/dinov2-base", jitter: float = 0.0,
-                 history: int = 1, height_head: bool = False):  # fmt: skip
+                 history: int = 1, height_head: bool = False, level_head: bool = False,
+                 height_levels: bool = False):  # fmt: skip
         super().__init__()
         self.config = dict(bev=dict(bev), n_cams=n_cams, image_size=list(image_size), cell=cell, out_res=out_res,
                            heights=list(heights), vit=vit, jitter=jitter, history=history,
-                           height_head=height_head)  # fmt: skip
+                           height_head=height_head, level_head=level_head, height_levels=height_levels)  # fmt: skip
+        assert height_head or not height_levels, "height_levels extends the height head"
         self.size, self.heights, self.jitter, self.history = tuple(image_size), list(heights), jitter, history
         self.enc = ImageEncoder(vit)
         self.hmix = nn.Sequential(nn.Conv2d(128 * len(self.heights) + 2, 128, 1), gn(128), nn.ReLU())
@@ -153,8 +159,30 @@ class BEVSegNet(nn.Module):
             self.f = int(round(out_res / bev["res"]))
             self.dctx = nn.Conv2d(128, 32, 1)
             self.detail = nn.Sequential(conv(64 + 32 + NC + 1, 64), Res(64), Res(64, 2), nn.Conv2d(64, NC, 1))
+        # created last: without them the other modules draw the same initial weights
+        self.level_head = nn.Sequential(conv(128, 64), nn.Conv2d(64, 2, 1)) if level_head else None
+        self.height_levels = nn.Conv2d(64, 2, 1) if height_levels else None  # on the height head's trunk
         self.vis_depth = None
         self.ctx_logits = None
+
+    def drop_aux(self):
+        """remove the auxiliary heads (the map output does not depend on them): a map-only network / checkpoint."""
+        self.height_head = self.level_head = self.height_levels = None
+        self.config.update(height_head=False, level_head=False, height_levels=False)
+        self.aux = {}
+        return self
+
+    def aux_heads(self, h) -> dict:
+        """named auxiliary outputs of the shared BEV feature h [B, 128, X, Y] (context cells), float."""
+        aux = {}
+        if self.height_head is not None:
+            t = self.height_head[0](h)
+            aux["height"] = self.height_head[1](t)[:, 0].float()  # [B, X, Y] m
+            if self.height_levels is not None:
+                aux["level_dz"] = self.height_levels(t).float()  # [B, 2, X, Y] m: above (> 0), below (< 0)
+        if self.level_head is not None:
+            aux["level"] = self.level_head(h).float()  # [B, 2, X, Y] logits: another level above, below
+        return aux
 
     # -- images ------------------------------------------------------------------------------------------------------
     def normalise(self, img):
@@ -216,7 +244,7 @@ class BEVSegNet(nn.Module):
                 h = self.gru(frame(ft.view(B, C, *ft.shape[1:]), t)[0], h)
             m = self.gru(m, h)
         h = self.bev(m)
-        self.aux = {} if self.height_head is None else {"height": self.height_head(h)[:, 0].float()}  # [B, X, Y] m
+        self.aux = self.aux_heads(h)
         ctx = self.ctx_head(h)
         if not self.out_res:
             self.ctx_logits = None

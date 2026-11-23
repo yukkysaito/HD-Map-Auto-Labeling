@@ -100,10 +100,12 @@ stay unlabelled in `map.npz`; the file only tags where they are.
 - `over` / `under` float16, 1 m cells (`res`) from `lo` / `origin` as `map.npz`: dz of the other level above / below
   the ego surface (m), NaN = none. A level is a thin, connected structure >= 150 m2 with >= 4 m clearance (trees,
   signs and poles are not).
-- The loader returns `bev_level` (uint8 per BEV cell: bit 1 = a level above, bit 2 = below) and `multilevel` (share of
-  the crop's cells with another level; NaN without the file). A sample is multilevel from `loader.MULTILEVEL` (5%).
+- The loader returns `bev_level` (uint8 per BEV cell: bit 1 = a level above, bit 2 = below), `bev_level_dz` (float16
+  [2, nx, ny]: dz of that level above / below, NaN = none) and `multilevel` (share of the crop's cells with another
+  level; NaN without the file). A sample is multilevel from `loader.MULTILEVEL` (5%).
 - `python -m hdlabel.bevnet.evaluate ... --by-level` also scores multilevel and single-level samples and the labelled
-  cells under / above another level separately.
+  cells under / above another level separately (with the road surface height MAE of each group when the model has the
+  height head).
 
 ## Vectors (vectors.geojson -> ego frame)
 `SceneMap.vectors(T_map_base, x, y)` transforms them to base_link and crops them to the range.
@@ -150,7 +152,7 @@ ds = HDMapDataset(
 )
 x = ds[0]  # images [T, C, 3, H, W], cam_mask, K, T_base_cam, T_cur_frame [T, C, 4, 4], frame_dt,
 # bev_cls / bev_height [nx, ny], vec_pts [V, 20, 3] / vec_cls / vec_mask / vec_dir [V, 3],
-# bev_level [nx, ny] / multilevel (other road levels, with levels.npz)
+# bev_level [nx, ny] / bev_level_dz [2, nx, ny] / multilevel (other road levels, with levels.npz)
 els = ds.item_vectors(0)  # vectors with all attributes (painted segments of lane lines, arrow outlines, polygons)
 ```
 - Some drives lack cameras (not in the bag): their `cam_mask` is false and their images are 0.
@@ -190,3 +192,8 @@ python -m hdlabel.bevnet.evaluate bevnet_mine.pt --dataset <other>/dataset.json 
 Several `dataset.json` (e.g. areas) can be given to `train`; it then also reports the val scores of each.
 Scores (`debug/eval/bevnet<tag>.json`) are at the label resolution: IoU per class and a boundary F-score (0.2 m
 tolerance) for markings, crosswalks and curbs.
+
+Auxiliary heads on the shared BEV feature (off by default; the map output does not depend on them and
+`BEVSegNet.drop_aux()` removes them for a map-only network): `--height W` the ego road surface height (`height_mae`),
+`--level W` another road level above / below each cell (BCE per bit against `bev_level`, only samples with
+`levels.npz`; `level_f1` per bit), `--height-levels W` (with `--height`) the dz of that level (`level_dz_mae`).

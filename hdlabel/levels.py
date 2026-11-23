@@ -130,20 +130,29 @@ class Levels:
 
     def __init__(self, path: str):
         m = np.load(path)
-        self.over, self.under = np.isfinite(m["over"]), np.isfinite(m["under"])
+        self.over, self.under = m["over"].astype(np.float16), m["under"].astype(np.float16)
         self.lo, self.res, self.origin = m["lo"], float(m["res"]), m["origin"]
 
-    def crop(self, smap: SceneMap, T: np.ndarray, x, y, res: float) -> np.ndarray:
-        """uint8 [nx, ny] on the grid of smap.crop(T, x, y, res) (the scene's SceneMap, same origin): bit 1 = another
-        level above, bit 2 = below, at the map xy where each cell meets the ego surface."""
+    def crop_dz(self, smap: SceneMap, T: np.ndarray, x, y, res: float) -> np.ndarray:
+        """float16 [2, nx, ny] on the grid of smap.crop(T, x, y, res) (the scene's SceneMap, same origin): dz (m) of
+        the other level above (> 0) / below (< 0) the ego surface at the map xy where each cell meets it, NaN = none."""
         Xg, Yg = grid(x, y, res)
         P, _ = smap.surface_points(T, np.stack([Xg.ravel(), Yg.ravel()], 1))
         ij = np.floor((P[:, :2] - self.lo) / self.res).astype(int)
         ins = np.all((ij >= 0) & (ij < self.over.shape), 1)
-        out = np.zeros(len(P), np.uint8)
+        out = np.full((2, len(P)), np.nan, np.float16)
         i, j = ij[ins, 0], ij[ins, 1]
-        out[ins] = self.over[i, j].astype(np.uint8) + 2 * self.under[i, j].astype(np.uint8)
-        return out.reshape(Xg.shape)
+        out[0, ins], out[1, ins] = self.over[i, j], self.under[i, j]
+        return out.reshape(2, *Xg.shape)
+
+    @staticmethod
+    def bits(dz: np.ndarray) -> np.ndarray:
+        """crop_dz -> uint8 [nx, ny]: bit 1 = another level above, bit 2 = below."""
+        return np.isfinite(dz[0]).astype(np.uint8) + 2 * np.isfinite(dz[1]).astype(np.uint8)
+
+    def crop(self, smap: SceneMap, T: np.ndarray, x, y, res: float) -> np.ndarray:
+        """uint8 [nx, ny] on the grid of smap.crop(T, x, y, res): bit 1 = another level above, bit 2 = below."""
+        return self.bits(self.crop_dz(smap, T, x, y, res))
 
 
 def main(argv=None):

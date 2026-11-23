@@ -65,8 +65,12 @@ def test_levels_crop_and_the_multilevel_tag(tmp_path):
     T[1, 3] = 0.0
     r = ds.level_crop("a", T)
     assert r["bev_level"].shape == (80, 20) and abs(float(r["multilevel"]) - 10 / 40) < 0.03
+    dz = r["bev_level_dz"]  # the dz of the level where its bit is set
+    assert dz.shape == (2, 80, 20) and torch.equal(torch.isfinite(dz[0]), (r["bev_level"] & 1) > 0)
+    assert torch.all(dz[0][torch.isfinite(dz[0])] == 5.0) and torch.isfinite(dz[1]).sum() == 0
     r = ds.level_crop("b", T)  # no levels.npz: no levels known
     assert r["bev_level"].shape == (80, 20) and not r["bev_level"].any() and torch.isnan(r["multilevel"])
+    assert r["bev_level_dz"].shape == (2, 80, 20) and torch.isnan(r["bev_level_dz"]).all()
 
 
 def test_level_scores_split_samples_and_cells():
@@ -108,3 +112,42 @@ def test_evaluate_reports_scores_by_level():
     assert r["by_level"]["multilevel"]["samples"] == 1 and r["by_level"]["single_level"]["samples"] == 1
     assert r["by_level"]["overhead"]["samples"] == 1 and "miou" in r["by_level"]["overhead"]
     assert "by_level" not in evaluate(net, DS(items))
+
+
+def test_evaluate_scores_the_level_and_height_heads():
+    from test_bevnet import BEV, SIZE, batch
+
+    from hdlabel.bevnet.metrics import evaluate
+    from hdlabel.bevnet.model import BEVSegNet
+
+    class DS(list):
+        bev = BEV
+
+    torch.manual_seed(0)
+    net = BEVSegNet(BEV, 1, SIZE, cell=0.4, out_res=0.1, heights=[0.0, 1.0], vit=None, height_head=True,
+                    level_head=True, height_levels=True)  # fmt: skip
+    items = []
+    for share in (0.3, 0.0, float("nan")):
+        x = {k: v[0] for k, v in batch().items()}
+        x["bev_height"] = torch.zeros(160, 64)
+        x["bev_level"] = torch.zeros(160, 64, dtype=torch.uint8)
+        x["bev_level_dz"] = torch.full((2, 160, 64), float("nan"))
+        if share > 0:
+            x["bev_level"][:40] = 1
+            x["bev_level_dz"][0, :40] = 6.0
+        items.append(dict(x, multilevel=torch.tensor(share)))
+    r = evaluate(net, DS(items), by_level=0.05)
+    assert set(r["level_f1"]) == {"above", "below"} and r["level_cells"] == {"above": 40 * 64, "below": 0}
+    assert set(r["level_dz_mae"]) == {"above"} and r["level_dz_mae"]["above"] > 0  # only where a level exists
+    assert r["height_mae"] > 0
+    g = r["by_level"]
+    for k in ("multilevel", "single_level", "overhead"):
+        assert g[k]["height_mae"] > 0, k
+    assert "above_lower" not in g and g["no_levels"] == 1
+    plain = evaluate(
+        BEVSegNet(BEV, 1, SIZE, cell=0.4, out_res=0.1, heights=[0.0, 1.0], vit=None), DS(items), by_level=0.05
+    )
+    assert (
+        not {"height_mae", "level_f1", "level_dz_mae"} & set(plain)
+        and "height_mae" not in plain["by_level"]["multilevel"]
+    )
