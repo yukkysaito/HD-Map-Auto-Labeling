@@ -14,6 +14,7 @@ from .losses import block_mean
 
 VIS_DEPTH = 50.0  # m: cells no camera sees closer than this are unknown
 THIN = ["marking", "crosswalk", "curb"]  # classes whose geometry is scored by the boundary F-score
+SURFACE = ["road", "marking", "crosswalk"]  # the drivable surface: its edge (road boundary) is scored too
 
 
 def predict(out, known=False, vis=None):
@@ -33,18 +34,27 @@ def upsample(pr, f):
 
 class Scores:
     """accumulates over samples: IoU per class over the labelled cells; boundary F-score of the THIN classes (a
-    predicted cell is correct if a label cell of its class lies within tol, and vice versa); IoU of the predicted
-    known region (not abstained) with the labelled region."""
+    predicted cell is correct if a label cell of its class lies within tol, and vice versa) and of the edge of the
+    drivable surface (road_edge: SURFACE cells next to other labelled classes); IoU of the predicted known region (not
+    abstained) with the labelled region."""
 
     def __init__(self, res: float, tol: float = 0.2):
         self.r = max(1, int(round(tol / res)))
         self.inter, self.union = torch.zeros(NC), torch.zeros(NC)
-        self.bf = {c: torch.zeros(4) for c in THIN}  # tp_pred, n_pred, tp_label, n_label
+        self.bf = {c: torch.zeros(4) for c in THIN + ["road_edge"]}  # tp_pred, n_pred, tp_label, n_label
+        self.surface = [CLASSES.index(c) for c in SURFACE]
         self.known = torch.zeros(2)
 
     def dilate(self, m):
         k = 2 * self.r + 1
         return F.max_pool2d(m[None, None].float(), k, 1, self.r)[0, 0] > 0
+
+    @staticmethod
+    def edge(surf, m):
+        """surface cells with a labelled non-surface 4-neighbour (edges against unlabelled cells do not count)."""
+        other = F.pad((~surf & m)[None, None].float(), (1, 1, 1, 1))[0, 0]
+        nb = (other[:-2, 1:-1] + other[2:, 1:-1] + other[1:-1, :-2] + other[1:-1, 2:]) > 0
+        return surf & m & nb
 
     def add(self, pr, y, pk=None):
         """pr, y [X, Y] class rasters at the label resolution; pk: prediction with abstention (0 = unknown)."""
@@ -57,6 +67,11 @@ class Scores:
             c = CLASSES.index(name)
             p, t = (pr == c) & m, y == c
             self.bf[name] += torch.tensor([(p & self.dilate(t)).sum(), p.sum(), (t & self.dilate(p)).sum(), t.sum()])
+        p, t = (
+            self.edge(torch.isin(pr, torch.tensor(self.surface)), m),
+            self.edge(torch.isin(y, torch.tensor(self.surface)), m),
+        )
+        self.bf["road_edge"] += torch.tensor([(p & self.dilate(t)).sum(), p.sum(), (t & self.dilate(p)).sum(), t.sum()])
         if pk is not None:
             k = pk > 0
             self.known += torch.tensor([(k & m).sum(), (k | m).sum()])

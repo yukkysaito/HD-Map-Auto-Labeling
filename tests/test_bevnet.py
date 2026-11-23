@@ -112,3 +112,22 @@ def test_height_head_is_an_auxiliary_task_on_the_shared_bev():
     loss.backward()
     assert torch.isfinite(loss) and net.bev.inp[0][0].weight.grad.abs().sum() > 0  # reaches the shared BEV backbone
     assert BEVSegNet(BEV, 1, SIZE, heights=[0.0], vit=None).height_head is None  # off by default (map only)
+
+
+def test_road_edge_boundary_f():
+    import torch
+
+    from hdlabel.bevnet.metrics import Scores
+
+    y = torch.full((50, 50), 5)  # sidewalk
+    y[:, 10:30] = 1  # road
+    y[:, 20] = 2  # a lane line inside: no road edge
+    near, far = y.clone(), y.clone()
+    near[:, 30:32] = 1  # edge 0.2 m off: within the tolerance
+    far[:, 30:36] = 1
+    bf = []
+    for pr in (y, near, far):
+        sc = Scores(0.1)
+        sc.add(pr, y)
+        bf.append(sc.result()["boundary_f"]["road_edge"])
+    assert bf[0] == bf[1] == 1.0 and bf[2] == 0.5
