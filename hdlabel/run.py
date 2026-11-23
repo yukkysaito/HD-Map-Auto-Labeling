@@ -524,7 +524,7 @@ def projection_args(area) -> list:
     if pr.get("mode") == "gather":
         args += ["--power", pr.get("power", 2.0)]
         args += ["--rgb-power", pr["rgb_power"]] if pr.get("rgb_power") else []
-    shift = (area.cfg.get("fusion") or {}).get("max_shift_m")
+    fu = area.cfg.get("fusion") or {}
     pt = pr.get("paint") or {}
     if pt.get("enabled"):
         from hdlabel.paint import DEFAULTS
@@ -540,7 +540,8 @@ def projection_args(area) -> list:
         from hdlabel.roadlevel import DEFAULTS as RL
 
         args += ["--road-level", *[rl.get(k, v) for k, v in RL.items()]]
-    return args + (["--max-shift", shift] if shift else [])
+    args += ["--max-shift", fu["max_shift_m"]] if fu.get("max_shift_m") else []
+    return args + (["--align", fu.get("align_max_m", 2.0)] if fu.get("align") else [])
 
 
 def curb_args(area, gts) -> list:
