@@ -10,6 +10,7 @@
 | `hdlabel/surface.py` | Point cloud map I/O (PCD) and the multi-level road surface (height layers + connectivity Dijkstra) |
 | `hdlabel/mapproj.py` | Projection onto the surface (GPU): ray / height field intersection, voting, drawing labels into camera images, ground snapping and other-level detection |
 | `hdlabel/arrowshape.py` | Arrow paint extraction and template matching (`hdlabel/assets/arrow_templates_<set>.npz`, `markings.arrow_templates`) |
+| `hdlabel/levels.py` | Other road levels above / below the ego level from the point cloud map (`levels.npz`, optional export addition `dataset.levels`): the `multilevel` sample tag and per-level scores |
 | `hdlabel/bev.py` | Ego-frame BEV raster and vectors from the map-frame labels (shared by export, loader and review) |
 | `hdlabel/loader.py` | Reference training Dataset (PyTorch) |
 | `hdlabel/validate.py` | `./autolabel validate`: acceptance check of an exported dataset (training side) |

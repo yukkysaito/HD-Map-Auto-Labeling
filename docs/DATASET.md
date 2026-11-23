@@ -22,6 +22,7 @@ dataset.json                 entry point (below)
   vectors.geojson            3D vectors (map frame, m; z = road surface height)
   samples.jsonl              one line per sample
   frames.jsonl               one line per input frame (only the images the samples use)
+  levels.npz                 optional (config dataset.levels): other road levels above / below the ego level (below)
   images/cam<N>/<stamp>.jpg  undistorted images (hard links into work/: no extra space; copying makes real files)
 ```
 All paths are relative to the scene directory: `dataset/` can be moved to another machine as is.
@@ -86,7 +87,23 @@ that they match.
 
 `cls[i, j]` of `map.npz` is at map `x = origin.x + lo.x + (i + 0.5) * res`, `y = origin.y + lo.y + (j + 0.5) * res`.
 **The raster only contains the road level the vehicle drives on**: the ground road when driving under an overpass,
-the deck on a bridge; levels never mix.
+the deck on a bridge; levels never mix. A road at another height that is connected to the ego level by drivable slopes
+and does not lie over or under it (e.g. a frontage road beside a viaduct, joined by a ramp) is part of the ego level:
+`height` tells it apart.
+
+## Other road levels (levels.npz, optional)
+Grade-separated places (overpasses, elevated roads and rails, noise enclosures, tunnel ceilings above the road; the
+ground below a bridge or viaduct) from the LiDAR point cloud map (`hdlabel/levels.py`). Written by export with
+`dataset.levels: true`, or afterwards for an existing dataset:
+`python -m hdlabel.levels output/<name>/dataset/dataset.json --map <pointcloud_map.pcd>`. No new labels: other levels
+stay unlabelled in `map.npz`; the file only tags where they are.
+- `over` / `under` float16, 1 m cells (`res`) from `lo` / `origin` as `map.npz`: dz of the other level above / below
+  the ego surface (m), NaN = none. A level is a thin, connected structure >= 150 m2 with >= 4 m clearance (trees,
+  signs and poles are not).
+- The loader returns `bev_level` (uint8 per BEV cell: bit 1 = a level above, bit 2 = below) and `multilevel` (share of
+  the crop's cells with another level; NaN without the file). A sample is multilevel from `loader.MULTILEVEL` (5%).
+- `python -m hdlabel.bevnet.evaluate ... --by-level` also scores multilevel and single-level samples and the labelled
+  cells under / above another level separately.
 
 ## Vectors (vectors.geojson -> ego frame)
 `SceneMap.vectors(T_map_base, x, y)` transforms them to base_link and crops them to the range.
@@ -132,7 +149,8 @@ ds = HDMapDataset(
     bev=dict(x=[-50, 150], y=[-80, 80], res=0.2),
 )
 x = ds[0]  # images [T, C, 3, H, W], cam_mask, K, T_base_cam, T_cur_frame [T, C, 4, 4], frame_dt,
-# bev_cls / bev_height [nx, ny], vec_pts [V, 20, 3] / vec_cls / vec_mask / vec_dir [V, 3]
+# bev_cls / bev_height [nx, ny], vec_pts [V, 20, 3] / vec_cls / vec_mask / vec_dir [V, 3],
+# bev_level [nx, ny] / multilevel (other road levels, with levels.npz)
 els = ds.item_vectors(0)  # vectors with all attributes (painted segments of lane lines, arrow outlines, polygons)
 ```
 - Some drives lack cameras (not in the bag): their `cam_mask` is false and their images are 0.

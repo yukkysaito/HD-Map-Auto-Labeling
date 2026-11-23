@@ -3,7 +3,9 @@
 usage: python -m hdlabel.bevnet.evaluate output/<name>/debug/eval/bevnet<tag>.pt [--dataset dataset.json]
        [--split val|train|all] [--val N] -> the scores as JSON on stdout.
        `--split all` scores every sample, e.g. of an area the model has never seen; `--still-every 2` scores a
-       standing vehicle once per 2 s (waits at lights otherwise weigh one view many times)
+       standing vehicle once per 2 s (waits at lights otherwise weigh one view many times); `--by-level` also scores the
+       multilevel samples (overpasses, elevated roads, bridges in the crop) and the single-level ones separately, and the
+       cells under / above another level (needs <scene>/levels.npz: config dataset.levels or python -m hdlabel.levels)
 """
 
 from __future__ import annotations
@@ -13,6 +15,8 @@ import json
 import os
 
 import torch
+
+from hdlabel.loader import MULTILEVEL
 
 from .data import BEVDataset
 from .metrics import evaluate
@@ -28,6 +32,13 @@ def main(argv=None):
     p.add_argument(
         "--still-every", type=float, default=0.0, help="one sample per N s while the vehicle stands (0: all)"
     )
+    p.add_argument(
+        "--by-level",
+        type=float,
+        nargs="?",
+        const=MULTILEVEL,
+        help=f"scores per road-level group; a sample is multilevel from this crop share (default {MULTILEVEL})",
+    )
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     a = p.parse_args(argv)
     net, ck = load_checkpoint(a.model, a.device)
@@ -36,7 +47,7 @@ def main(argv=None):
     split = None if a.split == "all" else a.split
     va = BEVDataset(ds_json, split=split, bev=cfg["bev"], image_size=tuple(cfg["image_size"]),
                     history=cfg.get("history", 1), still_every_s=a.still_every)  # fmt: skip
-    print(json.dumps(evaluate(net, va, a.val, ck.get("known", False))))
+    print(json.dumps(evaluate(net, va, a.val, ck.get("known", False), a.by_level)))
 
 
 if __name__ == "__main__":

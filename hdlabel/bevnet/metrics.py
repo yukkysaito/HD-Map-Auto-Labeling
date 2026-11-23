@@ -86,11 +86,15 @@ class Scores:
 
 
 @torch.no_grad()
-def evaluate(net, ds, n: int | None = None, known: bool = False) -> dict:
-    """Scores of net on (up to n evenly spaced samples of) ds."""
+def evaluate(net, ds, n: int | None = None, known: bool = False, by_level: float | None = None) -> dict:
+    """Scores of net on (up to n evenly spaced samples of) ds. by_level: also score separately (key `by_level`) the
+    multilevel samples (share of the crop over / under another level >= by_level, loader.MULTILEVEL), the single-level
+    ones and the labelled cells under an overhead level (bit 1 of bev_level) or above a lower one (bit 2); needs the
+    scenes' levels.npz (samples without it are counted in `no_levels`)."""
     was = net.training
     net.eval()
     sc = Scores(ds.bev["res"])
+    groups = LevelScores(ds.bev["res"], by_level) if by_level is not None else None
     herr = torch.zeros(2)  # sum |error|, cells (road surface height, if the model has the head)
     idx = np.arange(len(ds)) if not n or n >= len(ds) else np.linspace(0, len(ds) - 1, n).astype(int)
     for i in idx:
@@ -101,6 +105,8 @@ def evaluate(net, ds, n: int | None = None, known: bool = False) -> dict:
         pr = upsample(predict(out)[0].cpu(), net.f)
         pk = upsample(predict(out, known, net.vis_depth < VIS_DEPTH)[0].cpu(), net.f)
         sc.add(pr, y, pk)
+        if groups is not None:
+            groups.add(pr, y, pk, x["bev_level"][0], float(x["multilevel"][0]))
         if "height" in net.aux:
             t = block_mean(x["bev_height"], net.fc)[0]
             ok = torch.isfinite(t)
@@ -109,4 +115,34 @@ def evaluate(net, ds, n: int | None = None, known: bool = False) -> dict:
     r = sc.result()
     if herr[1] > 0:
         r["height_mae"] = round(float(herr[0] / herr[1]), 3)
+    if groups is not None:
+        r["by_level"] = groups.result()
     return r
+
+
+class LevelScores:
+    """Scores split by road levels: per sample (multilevel / single_level by the crop share `thr`) and per cell
+    (overhead: labelled cells with another level above; above_lower: with another level below)."""
+
+    def __init__(self, res: float, thr: float):
+        self.thr, self.no_levels = thr, 0
+        self.s = {k: Scores(res) for k in ("multilevel", "single_level", "overhead", "above_lower")}
+        self.n = dict.fromkeys(self.s, 0)
+
+    def add(self, pr, y, pk, level, share: float):
+        if not np.isfinite(share):
+            self.no_levels += 1
+            return
+        k = "multilevel" if share >= self.thr else "single_level"
+        self.s[k].add(pr, y, pk)
+        self.n[k] += 1
+        for k, bit in (("overhead", 1), ("above_lower", 2)):
+            m = (level & bit) > 0
+            if (m & (y > 0)).any():  # only those cells are labelled: the rest is not scored
+                z = torch.zeros_like(y)
+                self.s[k].add(pr, torch.where(m, y, z), torch.where(m, pk, z.to(pk.dtype)))
+                self.n[k] += 1
+
+    def result(self) -> dict:
+        out = {k: dict(self.s[k].result(), samples=self.n[k]) for k in self.s if self.n[k]}
+        return dict(out, threshold=self.thr, no_levels=self.no_levels)

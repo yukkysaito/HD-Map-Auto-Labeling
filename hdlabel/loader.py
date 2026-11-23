@@ -12,6 +12,10 @@ Each item = one sample (qa.ok only) of a scene of output/<name>/dataset/:
   bev_cls     long  [nx, ny]         raster labels (common.CLASSES, 0 = unobserved -> ignore in the loss), cropped from the
                                      scene's map-frame raster for `bev` (x, y range in m, res; default: dataset.json)
   bev_height  float [nx, ny]         road surface z in base_link (NaN = none)
+  bev_level   uint8 [nx, ny]         other road levels at the cell (<scene>/levels.npz, optional): bit 1 = a level above
+                                     (overpass, elevated road, enclosure, tunnel ceiling), bit 2 = a level below; 0 without
+  multilevel  float []               share of the crop's cells with another level (NaN without levels.npz); a sample is
+                                     multilevel when it is >= MULTILEVEL
   vec_pts     float [V, P, 3]        vector instances as P equally spaced points (base_link); vec_cls long [V] (index into
                                      VECTOR_CLASSES), vec_mask bool [V] (padding)
   vec_dir     float [V, 3]           arrows: allowed directions, multi-hot over ARROW_DIRECTIONS; arrow points run tail -> tip
@@ -29,12 +33,14 @@ import cv2
 import numpy as np
 import torch
 
-from .bev import SceneMap, resample
+from .bev import SceneMap, grid, resample
+from .levels import Levels
 
 # MapTR-style vector classes: lane_line -> divider, curb + observed road_boundary -> boundary, crosswalk -> ped_crossing,
 # arrow (lane direction marking, its directions in vec_dir) -> arrow, stop_line -> stop_line
 VECTOR_CLASSES = ["divider", "boundary", "ped_crossing", "arrow", "stop_line"]
 ARROW_DIRECTIONS = ["straight", "left", "right"]
+MULTILEVEL = 0.05  # share of the BEV crop over / under another level from which a sample counts as multilevel
 
 
 def vec_class(e):
@@ -91,7 +97,7 @@ class HDMapDataset(torch.utils.data.Dataset):
         cams = cams or idx["cameras"]  # default: every camera of the dataset
         self.cams, self.T, self.size, self.max_v, self.npts = cams, history, image_size, max_vectors, npts
         self.bev = dict(bev or idx["bev"])
-        self.items, self.scenes, self._maps = [], {}, {}
+        self.items, self.scenes, self._maps, self._levels = [], {}, {}, {}
         for s in idx["scenes"]:
             if (split and s.get("split") != split) or (scenes and s["scene"] not in scenes):
                 continue
@@ -113,6 +119,18 @@ class HDMapDataset(torch.utils.data.Dataset):
             d = self.scenes[sid]["dir"]
             self._maps[sid] = SceneMap(f"{d}/map.npz", f"{d}/vectors.geojson")
         return self._maps[sid]
+
+    def level_crop(self, sid, T: np.ndarray) -> dict:
+        """bev_level / multilevel (module doc) of the BEV crop of pose T in scene sid."""
+        if sid not in self._levels:
+            f = f"{self.scenes[sid]['dir']}/levels.npz"
+            self._levels[sid] = Levels(f) if os.path.exists(f) else None
+        lv, b = self._levels[sid], self.bev
+        if lv is None:
+            n = grid(b["x"], b["y"], b["res"])[0].shape
+            return dict(bev_level=torch.zeros(n, dtype=torch.uint8), multilevel=torch.tensor(float("nan")))
+        m = lv.crop(self.scene_map(sid), T, b["x"], b["y"], b["res"])
+        return dict(bev_level=torch.from_numpy(m), multilevel=torch.tensor(float((m > 0).mean())))
 
     def item_vectors(self, i) -> list[dict]:
         """all vector elements of item i in base_link, clipped to the BEV range, full detail (bev.SceneMap.vectors)."""
@@ -196,6 +214,7 @@ class HDMapDataset(torch.utils.data.Dataset):
             vec_cls=torch.from_numpy(vcls),
             vec_mask=torch.from_numpy(vmask),
             vec_dir=torch.from_numpy(vdir),
+            **self.level_crop(sid, T_cur),
             scene=sid,
             stamp=r["stamp"],
         )

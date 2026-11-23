@@ -773,6 +773,16 @@ def export(area, s, force):
         [f"{S}/vectors/vectors.geojson", f"{S}/labels/arrows.json", rv],
         force=force,
     )
+    if ds.get("levels"):  # optional: other road levels around the ego level (multilevel sample tag)
+        step(
+            area,
+            f"levels_{s['id']}",
+            f"{STEPS}/levels.py",
+            ["--map", area.map, "--scene", area.ds_dir(s["id"])],
+            [f"{area.ds_dir(s['id'])}/levels.npz"],
+            [f"{area.ds_dir(s['id'])}/map.npz"],
+            force=force,
+        )
     sc = json.load(open(f"{area.ds_dir(s['id'])}/scene.json"))
     return f"{sc['qa_ok']} / {sc['samples']} samples ok"
 

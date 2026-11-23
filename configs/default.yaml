@@ -98,6 +98,7 @@ projection: {mode: gather,     # gather: every visible surface cell looks its cl
 dataset: {every_s: 0.5, val_every_s: null,  # val sample spacing (null = every_s; 0.1 = every model cycle for online_eval)
           history_s: 2.0, history_dt_s: 0.5,
           bev: {x: [-50, 150], y: [-80, 80], res: 0.2},  # default ego-frame crop (the loader may use any range / res)
+          levels: false,  # true: <scene>/levels.npz, other road levels from the point cloud map (multilevel tag)
           split: {tile_m: 250, val_every: 5, test_tiles: []}}  # by location: fixed test tiles, val = every 5th other tile
 debug: true                   # debug images + PCDs + audit (--no-debug or false for large runs)
 audit: {sample: 5, seed: 0, max_risk: 0.3, max_spot_error: 0.1}  # acceptance: scenes over max_risk need review; `sample` random scenes to inspect
