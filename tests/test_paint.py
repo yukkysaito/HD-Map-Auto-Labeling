@@ -22,10 +22,20 @@ def test_blob_follows_the_paint():
     out, st = refine(*scene(True), res=0.1)
     assert (out[35:65, 38:42] == MARKING).all() and (out[35:65, 55:59] == MARKING).all()
     assert (out[50, 45:52] == ROAD).all() and (out[31, 31] == ROAD)  # unpainted inside of the blob
-    assert st["refined"] == 1 and st["marking_after"] < st["marking_before"]
+    assert st["refined_cells"] > 0 and st["marking_after"] < st["marking_before"]
 
 
 def test_blob_without_paint_contrast_is_kept():
     cls, rgb = scene(False)
     out, st = refine(cls, rgb, res=0.1)
-    assert (out == cls).all() and st["refined"] == 0
+    assert (out == cls).all() and st["refined_cells"] == 0
+
+
+def test_a_long_line_refines_only_where_its_paint_shows():
+    cls = np.full((40, 200), ROAD, np.uint8)
+    cls[18:23, 10:190] = MARKING  # segmented line, 0.5 m wide (blob)
+    rgb = np.full((40, 200, 3), 80, np.uint8)
+    rgb[19:22, 10:100] = 220  # painted 0.3 m wide in the sharp half; the far half is blurred (no contrast)
+    out, _ = refine(cls, rgb, res=0.1)
+    assert (out[18, 20:90] == ROAD).all() and (out[20, 20:90] == MARKING).all()  # sharp: follows the paint
+    assert (out[18:23, 120:190] == MARKING).all()  # blurred: kept as segmented

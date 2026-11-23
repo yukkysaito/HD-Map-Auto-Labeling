@@ -2,8 +2,12 @@
 into rectangles, hatched areas into solid triangles), the fused ortho image shows the paint itself.
 
 Within reach of the segmentation's marking cells, a cell is marking when it is brighter than the asphalt around it
-(white top-hat of the brightest colour channel: white and yellow paint), else road. A marking blob whose cells show
-little paint contrast (blurred or far views) is kept as the segmentation drew it."""
+(white top-hat of the brightest colour channel: white and yellow paint), else road. Where the segmented marking within
+share_m shows little paint contrast (blurred or far views, worn paint) it is kept as the segmentation drew it - decided
+locally, so one long line refines where it is sharp and stays where it is not.
+
+Only the raster for training uses the result (ground_map.npz `cls_paint`); the vectors keep the segmentation's shapes,
+whose stroke widths tell lines, stop lines and areas apart (text and hatched areas stay marking_area)."""
 
 from __future__ import annotations
 
@@ -13,7 +17,7 @@ import numpy as np
 from hdlabel.common import CLASSES
 
 ROAD, MARKING = CLASSES.index("road"), CLASSES.index("marking")
-DEFAULTS = dict(contrast=18.0, window_m=1.5, grow_m=0.4, min_share=0.1)
+DEFAULTS = dict(contrast=18.0, window_m=1.0, grow_m=0.4, min_share=0.1, share_m=2.0)
 
 
 def paint_mask(rgb, observed, res: float, contrast: float, window_m: float):
@@ -37,15 +41,13 @@ def refine(cls, rgb, res: float, **kw):
     g = max(1, int(round(p["grow_m"] / res)))
     zone = cv2.dilate(seg.astype(np.uint8), np.ones((2 * g + 1, 2 * g + 1), np.uint8)).astype(bool)
     zone &= (cls == ROAD) | seg
-    n, comp = cv2.connectedComponents(zone.astype(np.uint8), connectivity=8)
-    n_seg = np.bincount(comp[seg], minlength=n)
-    n_paint = np.bincount(comp[zone & paint & seg], minlength=n)
-    ok = n_paint >= p["min_share"] * np.maximum(n_seg, 1)
-    ok[0] = False
-    use = ok[comp] & zone
+    k = max(3, int(round(p["share_m"] / res)) | 1)  # local share of the segmented marking that shows paint
+    n_seg = cv2.boxFilter(seg.astype(np.float32), -1, (k, k), normalize=False)
+    n_paint = cv2.boxFilter((seg & paint).astype(np.float32), -1, (k, k), normalize=False)
+    use = zone & (n_seg > 0) & (n_paint >= p["min_share"] * n_seg)
     out = cls.copy()
     out[use & paint] = MARKING
     out[use & ~paint & seg] = ROAD
-    st = dict(blobs=int(n - 1), refined=int(ok.sum()), marking_before=int(seg.sum()),
+    st = dict(refined_cells=int(use.sum()), kept_cells=int((zone & ~use).sum()), marking_before=int(seg.sum()),
               marking_after=int((out == MARKING).sum()))  # fmt: skip
     return out, st

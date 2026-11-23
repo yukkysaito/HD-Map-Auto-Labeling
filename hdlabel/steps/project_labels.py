@@ -6,7 +6,8 @@ official extrinsic + time offset (time_offset.py), classes from the per-image se
 Several drives are fused (votes are summed); keyframes whose camera is farther than --rmax from the grid are skipped, and
 cameras whose time offset could not be estimated (offset_status failed) are not used.
 Per 0.1 m cell: class = argmax of the ground-class votes (0 = unobserved), ortho RGB = distance-weighted mean; with
---paint the marking class follows the paint seen in the ortho image (hdlabel/paint.py).
+--paint also cls_paint, the marking class following the paint seen in the ortho image (hdlabel/paint.py; the training
+raster of export.py, while the vectors keep cls).
 --mode gather looks every visible cell up in the image instead of splatting pixels onto cells (no holes or moire at
 range). With --max-shift, a further drive whose markings line up with the first drive's only after a shift (time offset
 or pose error of a drive) is not fused.
@@ -130,10 +131,10 @@ def main(argv=None):
     p.add_argument("--rgb-power", type=float, help="gather: ortho colour weight exponent (mapproj.Projector.gather)")
     p.add_argument(
         "--paint",
-        nargs=4,
+        nargs=5,
         type=float,
-        metavar=("CONTRAST", "WINDOW_M", "GROW_M", "MIN_SHARE"),
-        help="refine the marking class with the paint in the ortho image (hdlabel/paint.py)",
+        metavar=("CONTRAST", "WINDOW_M", "GROW_M", "MIN_SHARE", "SHARE_M"),
+        help="also write cls_paint: the marking class following the paint in the ortho image (hdlabel/paint.py)",
     )
     p.add_argument(
         "--max-shift",
@@ -172,12 +173,11 @@ def main(argv=None):
     )
     cls = pj.dense(cls_c)
     rgb = pj.dense((acc["rgb"] / acc["w"].clamp(min=1e-9)[:, None]).clamp(0, 255).to(torch.uint8))
-    if a.paint:
-        from hdlabel.paint import refine
+    extra = {}
+    if a.paint:  # the vectors keep using cls (stroke widths of the segmentation), the training raster cls_paint
+        from hdlabel.paint import DEFAULTS, refine
 
-        cls, stats["paint"] = refine(
-            cls, rgb, pj.res, **dict(zip(("contrast", "window_m", "grow_m", "min_share"), a.paint))
-        )
+        extra["cls_paint"], stats["paint"] = refine(cls, rgb, pj.res, **dict(zip(DEFAULTS, a.paint)))
     groups = CLASSES[1:]
     os.makedirs(a.out, exist_ok=True)
     np.savez_compressed(
@@ -193,6 +193,7 @@ def main(argv=None):
         cells=pj.cells,
         votes=votes.cpu().numpy().astype(np.float16),
         n=acc["n"].cpu().numpy().astype(np.float32),
+        **extra,
         snap=bool(a.snap),
     )
     obs = cls > 0

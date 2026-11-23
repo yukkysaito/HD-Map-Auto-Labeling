@@ -61,7 +61,8 @@ def main(argv=None):
 
     # ---- labels in the map frame
     m = np.load(f"{a.labels}/ground_map.npz")
-    cls = arrow_cls(m["cls"], load_arrows(a.labels), m["lo"], float(m["res"]), m["origin"])
+    base = m["cls_paint"] if "cls_paint" in m.files else m["cls"]  # marking following the paint (project --paint)
+    cls = arrow_cls(base, load_arrows(a.labels), m["lo"], float(m["res"]), m["origin"])
     np.savez_compressed(
         f"{a.out}/map.npz",
         cls=cls,
