@@ -65,7 +65,7 @@ def test_tiny_network_trains_one_step():
     sc = Scores(BEV["res"])
     sc.add(predict(out.detach())[0], x["bev_cls"][0])
     r = sc.result()
-    assert 0 <= r["miou"] <= 1 and set(r["boundary_f"]) == {"marking", "crosswalk", "curb"}
+    assert 0 <= r["miou"] <= 1 and set(r["boundary_f"]) == {"marking", "crosswalk", "curb", "road_edge"}
 
 
 def test_downsample_majority_ignores_unobserved():
