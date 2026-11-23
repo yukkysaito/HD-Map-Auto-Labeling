@@ -52,6 +52,18 @@ def vec_class(e):
     return None
 
 
+def thin_still(rs, every_s, move_m=0.1):
+    """samples (time order) without the near-duplicates of a standing vehicle: a sample is kept when it is move_m
+    from the last kept one or every_s later."""
+    out, last = [], None
+    for r in rs:
+        p, t = np.array(r["T_map_base"])[:2, 3], r["stamp"] * 1e-9
+        if last is None or np.linalg.norm(p - last[0]) >= move_m or t - last[1] >= every_s:
+            out.append(r)
+            last = p, t
+    return out
+
+
 class HDMapDataset(torch.utils.data.Dataset):
     def __init__(
         self,
@@ -66,10 +78,13 @@ class HDMapDataset(torch.utils.data.Dataset):
         scenes: list[str] | None = None,
         fast_decode: bool = False,
         uint8: bool = False,
+        still_every_s: float = 0.0,
     ):
         """fast_decode: JPEG decoding at 1/2, 1/4 or 1/8 scale (libjpeg DCT scaling) when the target size allows it -
         several times faster for long histories (T x C images per item), slightly different resampling.
-        uint8: images as uint8 0..255 (4x less memory between loader workers; the model divides by 255)."""
+        uint8: images as uint8 0..255 (4x less memory between loader workers; the model divides by 255).
+        still_every_s: while the vehicle stands (< 0.1 m from the last kept sample), keep a sample only every this many
+        seconds (0: keep all; waits at lights otherwise repeat one view many times)."""
         idx = json.load(open(dataset_json))
         self.fast_decode, self.uint8 = fast_decode, uint8
         root = os.path.dirname(os.path.abspath(dataset_json))
@@ -87,7 +102,8 @@ class HDMapDataset(torch.utils.data.Dataset):
                 f"{s['scene']}: exported with {scene['history']['frames']} history frames"
             )
             self.scenes[s["scene"]] = dict(dir=d, scene=scene, frames=frames)
-            self.items += [(s["scene"], r) for r in map(json.loads, open(f"{d}/samples.jsonl")) if r["qa"]["ok"]]
+            rs = [r for r in map(json.loads, open(f"{d}/samples.jsonl")) if r["qa"]["ok"]]
+            self.items += [(s["scene"], r) for r in (thin_still(rs, still_every_s) if still_every_s else rs)]
 
     def __len__(self):
         return len(self.items)

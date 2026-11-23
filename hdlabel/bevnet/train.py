@@ -82,6 +82,7 @@ def main(argv=None):
         "--height", type=float, default=0.0, help="weight of the auxiliary road surface height loss (0: no head)"
     )
     p.add_argument("--cnn-lr", type=float, default=1 / 3, help="lr factor of the trainable image CNN (0: frozen)")
+    p.add_argument("--still-every", type=float, default=0.0, help="train: one sample per N s while the vehicle stands")
     p.add_argument("--seed", type=int, default=0, help="other seeds measure the run-to-run spread of a result")
     p.add_argument("--tag", default="")
     a = p.parse_args(argv)
@@ -91,7 +92,10 @@ def main(argv=None):
 
     bev = dict(json.load(open(a.dataset_json[0]))["bev"], x=a.bev_x, y=a.bev_y, res=a.label_res)
     kw = dict(bev=bev, image_size=tuple(a.image_size), history=a.history)
-    trs = [BEVDataset(d, split="train", rot_deg=a.rot, flip=a.flip, **kw) for d in a.dataset_json]
+    trs = [
+        BEVDataset(d, split="train", rot_deg=a.rot, flip=a.flip, still_every_s=a.still_every, **kw)
+        for d in a.dataset_json
+    ]
     vas = [BEVDataset(d, split="val", **kw) for d in a.dataset_json]
     assert all(t.cams == trs[0].cams for t in trs), "datasets with different cameras"
     tr, va = trs[0], vas[0]

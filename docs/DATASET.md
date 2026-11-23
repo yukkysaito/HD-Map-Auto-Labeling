@@ -134,6 +134,7 @@ els = ds.item_vectors(0)  # vectors with all attributes (painted segments of lan
 ```
 - Some drives lack cameras (not in the bag): their `cam_mask` is false and their images are 0.
 - Without `bev` the default crop of `dataset.json` is used.
+- `still_every_s=N` keeps one sample per N s while the vehicle stands (waits at lights repeat one view; 0: all).
 
 ## Train / val split
 Drives pass the same places many times, so a random split would make validation too easy. The split is **by
