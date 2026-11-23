@@ -6,8 +6,8 @@ official extrinsic + time offset (time_offset.py), classes from the per-image se
 Several drives are fused (votes are summed); keyframes whose camera is farther than --rmax from the grid are skipped, and
 cameras whose time offset could not be estimated (offset_status failed) are not used.
 Per 0.1 m cell: class = argmax of the ground-class votes (0 = unobserved), ortho RGB = distance-weighted mean; with
---paint also cls_paint, the marking class following the paint seen in the ortho image (hdlabel/paint.py; the training
-raster of export.py, while the vectors keep cls).
+--paint / --paint-crosswalk also cls_paint: the marking class following the paint seen in the ortho image, the gaps
+between crosswalk stripes as road (hdlabel/paint.py; the training raster of export.py, while the vectors keep cls).
 --mode gather looks every visible cell up in the image instead of splatting pixels onto cells (no holes or moire at
 range). With --max-shift, a further drive whose markings line up with the first drive's only after a shift (time offset
 or pose error of a drive) is not fused.
@@ -30,6 +30,7 @@ import torch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from hdlabel.common import CLASSES, GROUPS, PALETTE, PoseInterp
 from hdlabel.mapproj import Camera, Projector, loader, snap_to_ground
+from hdlabel.paint import XWALK_DEFAULTS
 
 
 def project_drive(pj, data, calib, acc, a, stats):
@@ -137,6 +138,13 @@ def main(argv=None):
         help="also write cls_paint: the marking class following the paint in the ortho image (hdlabel/paint.py)",
     )
     p.add_argument(
+        "--paint-crosswalk",
+        nargs=len(XWALK_DEFAULTS),
+        type=float,
+        metavar=tuple(k.upper() for k in XWALK_DEFAULTS),
+        help="the unpainted gaps between crosswalk stripes become road (hdlabel/paint.py refine_crosswalk)",
+    )
+    p.add_argument(
         "--max-shift",
         type=float,
         default=0.0,
@@ -178,6 +186,12 @@ def main(argv=None):
         from hdlabel.paint import DEFAULTS, refine
 
         extra["cls_paint"], stats["paint"] = refine(cls, rgb, pj.res, **dict(zip(DEFAULTS, a.paint)))
+    if a.paint_crosswalk:
+        from hdlabel.paint import refine_crosswalk
+
+        extra["cls_paint"], stats["paint_crosswalk"] = refine_crosswalk(
+            extra.get("cls_paint", cls), rgb, pj.res, **dict(zip(XWALK_DEFAULTS, a.paint_crosswalk))
+        )
     groups = CLASSES[1:]
     os.makedirs(a.out, exist_ok=True)
     np.savez_compressed(

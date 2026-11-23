@@ -520,6 +520,11 @@ def projection_args(area) -> list:
         from hdlabel.paint import DEFAULTS
 
         args += ["--paint", *[pt.get(k, v) for k, v in DEFAULTS.items()]]
+    cw = pt.get("crosswalk") or {}
+    if cw.get("enabled"):
+        from hdlabel.paint import XWALK_DEFAULTS
+
+        args += ["--paint-crosswalk", *[cw.get(k, v) for k, v in XWALK_DEFAULTS.items()]]
     return args + (["--max-shift", shift] if shift else [])
 
 
