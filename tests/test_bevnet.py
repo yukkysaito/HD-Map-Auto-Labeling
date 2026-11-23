@@ -59,7 +59,7 @@ def test_tiny_network_trains_one_step():
     out = net(x)
     assert out.shape == (1, NC, 160, 64) and net.ctx_logits.shape == (1, NC, 40, 16)
     y = downsample(x["bev_cls"], net.f)
-    loss = seg_loss(out, y, torch.ones(NC), lovasz=0.5, known=0.5)
+    loss = seg_loss(out, y, torch.ones(NC), lovasz=0.5, known=0.5, edge=1.0, road_edge=1.0, surface=0.5)
     loss.backward()
     assert torch.isfinite(loss) and net.bev.inp[0][0].weight.grad.abs().sum() > 0
     sc = Scores(BEV["res"])
@@ -82,6 +82,39 @@ def test_near_boundary_marks_both_sides_of_a_class_edge_only():
     out, w = torch.randn(1, NC, 6, 6), torch.ones(NC)
     w[0] = 0
     assert torch.isclose(seg_loss(out, y, w), seg_loss(out, y, w, edge=1e-9))  # same normalisation as plain CE
+
+
+def test_priority_options_are_off_by_default_and_steer_the_loss():
+    from hdlabel.bevnet.losses import SURFACE, boost_weights, surface_map, surface_nll
+    from hdlabel.bevnet.train import parse_boost
+    from hdlabel.common import CLASSES
+
+    torch.manual_seed(0)
+    road, side, mark = CLASSES.index("road"), CLASSES.index("sidewalk"), CLASSES.index("marking")
+    y = torch.full((1, 8, 8), road)
+    y[0, :, 5:], y[0, :, 2], y[0, 0] = side, mark, 0  # road | marking line | road | sidewalk; first row unlabelled
+    out, w = torch.randn(1, NC, 8, 8, requires_grad=True), torch.rand(NC) + 0.5
+    w[0] = 0
+    plain = seg_loss(out, y, w, lovasz=0.5, known=0.5)
+    off = seg_loss(out, y, w, lovasz=0.5, known=0.5, road_edge=0.0, surface=0.0)
+    assert torch.equal(plain, off) and torch.equal(boost_weights(w, {}), w)  # bit-identical when off
+    # the road edge band: road / marking cells next to the sidewalk, not the marking line inside the road
+    s = surface_map(y)[0]
+    assert s[0].eq(0).all() and s[1:, :5].eq(1).all() and s[1:, 5:].eq(2).all()
+    band = near_boundary(surface_map(y), 1)[0]
+    assert band[1:, 4:6].all() and band.sum() == 14
+    assert not torch.isclose(seg_loss(out, y, w, road_edge=2.0), seg_loss(out, y, w))
+    # class boost: only the named class weight changes
+    b = boost_weights(w, parse_boost(["marking=2", "sidewalk=0.5"]))
+    assert torch.isclose(b[mark], 2 * w[mark]) and torch.isclose(b[side], 0.5 * w[side]) and b[road] == w[road]
+    # surface loss: confusions inside the drivable surface cost nothing
+    good = torch.full((1, NC, 8, 8), -10.0)
+    good[:, road] = torch.where(s > 1, -10.0, 10.0)[None]  # all drivable cells say road, even the marking line
+    good[:, side] = torch.where(s > 1, 10.0, -10.0)[None]
+    assert surface_nll(good, y).max() < 1e-6 and set(SURFACE) <= set(CLASSES)
+    loss = seg_loss(out, y, w, road_edge=1.0, surface=1.0)
+    loss.backward()
+    assert torch.isfinite(loss) and out.grad.abs().sum() > 0
 
 
 def test_temporal_fusion_trains_on_past_frames():

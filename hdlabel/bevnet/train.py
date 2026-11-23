@@ -20,10 +20,10 @@ import cv2
 import numpy as np
 import torch
 
-from hdlabel.common import PALETTE
+from hdlabel.common import CLASSES, PALETTE
 
 from .data import NC, BEVDataset, collate, downsample
-from .losses import class_weights, height_loss, seg_loss
+from .losses import boost_weights, class_weights, height_loss, seg_loss
 from .metrics import VIS_DEPTH, evaluate, predict
 from .model import BEVSegNet
 
@@ -53,6 +53,17 @@ def examples(net, ds, known, path, n=3):
     cv2.imwrite(path, np.vstack(tiles)[..., ::-1])
 
 
+def parse_boost(items):
+    """["marking=2", ...] -> {"marking": 2.0, ...}; the names must be label classes (not unobserved)."""
+    boost = {}
+    for it in items:
+        name, _, f = it.partition("=")
+        if name not in CLASSES[1:] or not f:
+            raise SystemExit(f"--class-boost {it}: expected CLASS=FACTOR with CLASS in {CLASSES[1:]}")
+        boost[name] = float(f)
+    return boost
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("dataset_json", nargs="+")
@@ -77,6 +88,16 @@ def main(argv=None):
     p.add_argument("--lovasz", type=float, default=0.5, help="weight of the Lovasz-softmax loss")
     p.add_argument("--known", type=float, default=0.5, help="weight of the abstention (cell unlabelled) loss")
     p.add_argument("--edge", type=float, default=0.0, help="extra cross-entropy weight of cells near class boundaries")
+    p.add_argument("--road-edge", type=float, default=0.0, help="extra cross-entropy weight near the road boundary")
+    p.add_argument("--road-edge-r", type=int, default=3, help="--road-edge band half-width (output cells)")
+    p.add_argument("--surface", type=float, default=0.0, help="weight of the drivable-surface-or-not loss")
+    p.add_argument(
+        "--class-boost",
+        nargs="+",
+        default=[],
+        metavar="CLASS=FACTOR",
+        help="multiply the class weights, e.g. marking=2 sidewalk=0.5",
+    )
     p.add_argument("--aux", type=float, default=0.5, help="weight of the loss on the context logits")
     p.add_argument(
         "--height", type=float, default=0.0, help="weight of the auxiliary road surface height loss (0: no head)"
@@ -86,6 +107,7 @@ def main(argv=None):
     p.add_argument("--seed", type=int, default=0, help="other seeds measure the run-to-run spread of a result")
     p.add_argument("--tag", default="")
     a = p.parse_args(argv)
+    boost = parse_boost(a.class_boost)
     torch.manual_seed(a.seed)
     np.random.seed(a.seed)
     dev = "cuda"
@@ -121,7 +143,7 @@ def main(argv=None):
             sid, r = t.items[i]
             lab = t.scene_map(sid).crop(np.array(r["T_map_base"]), bev["x"], bev["y"], bev["res"])[0]
             cnt += torch.bincount(torch.from_numpy(lab.astype(np.int64)).ravel(), minlength=NC)
-    wts = class_weights(cnt).to(dev)
+    wts = boost_weights(class_weights(cnt), boost).to(dev)
 
     if a.cnn_lr == 0:
         for n, q in net.named_parameters():
@@ -138,7 +160,8 @@ def main(argv=None):
         for x in dl:
             with torch.autocast("cuda", dtype=torch.bfloat16):
                 out = net(x)
-            loss = seg_loss(out, downsample(x["bev_cls"], net.f).to(dev), wts, a.lovasz, a.known, a.edge)
+            loss = seg_loss(out, downsample(x["bev_cls"], net.f).to(dev), wts, a.lovasz, a.known, a.edge,
+                            road_edge=a.road_edge, road_edge_r=a.road_edge_r, surface=a.surface)  # fmt: skip
             if net.ctx_logits is not None and a.aux:
                 loss = loss + a.aux * seg_loss(net.ctx_logits, downsample(x["bev_cls"], net.fc).to(dev), wts)
             if "height" in net.aux:
