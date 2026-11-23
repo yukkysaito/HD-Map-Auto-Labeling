@@ -10,11 +10,10 @@ import torch.nn.functional as F
 from hdlabel.common import CLASSES
 
 from .data import NC, collate
-from .losses import block_mean
+from .losses import SURFACE, block_mean
 
 VIS_DEPTH = 50.0  # m: cells no camera sees closer than this are unknown
 THIN = ["marking", "crosswalk", "curb"]  # classes whose geometry is scored by the boundary F-score
-SURFACE = ["road", "marking", "crosswalk"]  # the drivable surface: its edge (road boundary) is scored too
 
 
 def predict(out, known=False, vis=None):
