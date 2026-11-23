@@ -514,6 +514,11 @@ def projection_args(area) -> list:
     if pr.get("mode") == "gather":
         args += ["--power", pr.get("power", 2.0)]
     shift = (area.cfg.get("fusion") or {}).get("max_shift_m")
+    pt = pr.get("paint") or {}
+    if pt.get("enabled"):
+        from hdlabel.paint import DEFAULTS
+
+        args += ["--paint", *[pt.get(k, v) for k, v in DEFAULTS.items()]]
     return args + (["--max-shift", shift] if shift else [])
 
 
