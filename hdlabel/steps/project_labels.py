@@ -31,6 +31,7 @@ import torch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from hdlabel.common import CLASSES, GROUPS, PALETTE, PoseInterp
 from hdlabel.mapproj import Camera, Projector, loader, snap_to_ground
+from hdlabel.paint import DEFAULTS as PAINT_DEFAULTS
 from hdlabel.paint import XWALK_DEFAULTS
 
 
@@ -133,9 +134,9 @@ def main(argv=None):
     p.add_argument("--rgb-power", type=float, help="gather: ortho colour weight exponent (mapproj.Projector.gather)")
     p.add_argument(
         "--paint",
-        nargs=5,
+        nargs=len(PAINT_DEFAULTS),
         type=float,
-        metavar=("CONTRAST", "WINDOW_M", "GROW_M", "MIN_SHARE", "SHARE_M"),
+        metavar=tuple(k.upper() for k in PAINT_DEFAULTS),
         help="also write cls_paint: the marking class following the paint in the ortho image (hdlabel/paint.py)",
     )
     p.add_argument(
@@ -199,9 +200,9 @@ def main(argv=None):
         )
     extra = {}
     if a.paint:  # the vectors keep using cls (stroke widths of the segmentation), the training raster cls_paint
-        from hdlabel.paint import DEFAULTS, refine
+        from hdlabel.paint import refine
 
-        extra["cls_paint"], stats["paint"] = refine(cls, rgb, pj.res, **dict(zip(DEFAULTS, a.paint)))
+        extra["cls_paint"], stats["paint"] = refine(cls, rgb, pj.res, **dict(zip(PAINT_DEFAULTS, a.paint)))
     if a.paint_crosswalk:
         from hdlabel.paint import refine_crosswalk
 

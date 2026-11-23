@@ -44,6 +44,61 @@ def test_a_long_line_refines_only_where_its_paint_shows():
     assert (out[18:23, 120:190] == MARKING).all()  # blurred: kept as segmented
 
 
+OFF = dict(low=1.0, colour=0.0, speck_m2=0.0, edge_m=0.0)  # without the fixes below
+
+
+def test_faint_parts_of_a_line_between_sharp_ones_stay_marking():
+    cls = np.full((40, 200), ROAD, np.uint8)
+    cls[18:22, 10:190] = MARKING  # segmented line, 0.4 m wide
+    rgb = np.full((40, 200, 3), 80, np.uint8)
+    rgb[18:22, 10:190] = 92  # faint paint along the whole line (contrast 12 < 15)
+    for c in range(10, 190, 20):
+        rgb[18:22, c : c + 8] = 200  # sharp every 2 m
+    out, _ = refine(cls, rgb, res=0.1)
+    assert (out[18:22, 10:190] == MARKING).all()  # hysteresis: the faint parts are connected to the sharp ones
+    out, _ = refine(cls, rgb, res=0.1, **dict(OFF))
+    assert (out[18:22, 20:28] == ROAD).all()  # without it the line breaks into fragments
+
+    cls, rgb = np.full((50, 120), ROAD, np.uint8), np.full((50, 120, 3), 80, np.uint8)
+    cls[24:40, 60:70] = MARKING  # a blob drawn over a symbol (1 m wide, thicker than a line): no hysteresis
+    rgb[24:40, 60:70] = 92
+    rgb[24:40, 60:63] = 200  # the symbol's stroke
+    out, _ = refine(cls, rgb, res=0.1)
+    assert (out[24:40, 60:63] == MARKING).all() and (out[24:40, 63:70] == ROAD).all()
+
+
+def test_small_specks_and_kerb_edges_are_not_added():
+    cls = np.full((60, 200), ROAD, np.uint8)
+    cls[:5] = CLASSES.index("curb")
+    cls[28:32, 10:190] = MARKING  # segmented line
+    rgb = np.full((60, 200, 3), 80, np.uint8)
+    rgb[28:32, 10:190] = 220
+    rgb[24:26, 50:53] = 200  # 0.06 m2 bright speck 0.2 m from the line (asphalt texture)
+    rgb[33:38, 100:105] = 200  # 0.25 m2 paint 0.1 m from the line: kept
+    out, _ = refine(cls, rgb, res=0.1, grow_m=0.6)
+    assert (out[24:26, 50:53] == ROAD).all() and (out[33:38, 100:105] == MARKING).all()
+    cls[8:12, 10:190] = MARKING  # a line close to the kerb, whose bright edge is not paint
+    rgb[8:12, 10:190] = 220
+    rgb[5, 10:190] = 200
+    out, _ = refine(cls, rgb, res=0.1)
+    assert (out[5, 20:180] == ROAD).all()
+    out, _ = refine(cls, rgb, res=0.1, **dict(OFF, grow_m=0.6))
+    assert (out[5, 20:180] == MARKING).all() and (out[24:26, 50:53] == MARKING).all()
+
+
+def test_red_paint_counts():
+    cls = np.full((60, 100), ROAD, np.uint8)
+    cls[20:40, 20:80] = MARKING  # segmented blob over a red bar
+    rgb = np.full((60, 100, 3), 150, np.uint8)
+    rgb[27:33, 20:80] = (160, 90, 90)  # red on grey: hardly brighter in any channel
+    for c in range(24, 80, 10):
+        rgb[20:40, c : c + 3] = 230  # white strokes, so that the blob is refined
+    out, _ = refine(cls, rgb, res=0.1)
+    assert (out[27:33, 37:44] == MARKING).all() and (out[22:25, 37:44] == ROAD).all()
+    out, _ = refine(cls, rgb, res=0.1, **dict(OFF))
+    assert (out[27:33, 37:44] == ROAD).all()
+
+
 def crossing(stripe=(200, 200, 200), pavement=(80, 80, 80)):
     """road with a segmented crosswalk area (60 x 40 cells) over 0.4 m stripes 0.9 m apart."""
     cls = np.full((100, 100), ROAD, np.uint8)
