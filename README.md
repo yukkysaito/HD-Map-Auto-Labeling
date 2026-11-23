@@ -2,6 +2,12 @@
 
 Automatic generation of HD-map training data from rosbags.
 
+**The idea: the more you drive, the more HD map you get.** Drive with cameras in an area that has a LiDAR point cloud
+map. Every drive is turned into an HD map offline, without a person drawing anything, and drives of the same place are
+fused, so the map grows in coverage and improves in quality as data is collected. That offline HD map is the
+annotation for an online HD-map estimator: a camera model that predicts the map around the vehicle in its own frame
+while driving (absolute map coordinates are not needed for it).
+
 From rosbags (cameras, localization, the vehicle's official calibration) and a LiDAR point cloud map, this tool builds
 ground truth for online HD-map models that take multi-camera, multi-frame input:
 - raster labels (road, lane markings, crosswalks, curbs, sidewalks, ...)
