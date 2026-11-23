@@ -69,6 +69,26 @@ def test_label_sharing(area, monkeypatch):
     assert run.label_owners(area, sc) == {"a_0": "a_0", "b_0": "a_0", "b_1": "b_1", "c_0": "c_0"}
 
 
+def test_fixes_file_per_scene(area):
+    """vectorize gets the review fixes inside its scene's box only: a fix elsewhere (another scene verified, a new
+    drive's scenes) leaves the file, and so the scene's vectors and everything after them, untouched."""
+    import json
+
+    os.makedirs(area.review, exist_ok=True)
+    fix = lambda x, y: dict(kind="lane_line", at=[x, y], action="delete")  # noqa: E731
+    json.dump(dict(fixes=[fix(10, 10), fix(101, 50), dict(kind="arrow", add={})]), open(f"{area.review}/a.json", "w"))
+    s = dict(id="a_000", bbox=[0, 0, 100, 100])
+    f = run.fixes_file(area, s)
+    assert [x["at"] for x in json.load(open(f))["fixes"]] == [[10, 10], [101, 50]]  # margin; "add": arrows.py
+    t = os.path.getmtime(f)
+    os.utime(f, (t - 10,) * 2)
+    json.dump(dict(fixes=[fix(500, 500)]), open(f"{area.review}/b.json", "w"))  # another place
+    assert run.fixes_file(area, s) == f and os.path.getmtime(f) == t - 10
+    json.dump(dict(fixes=[fix(50, 50)]), open(f"{area.review}/b.json", "w"))  # this scene
+    run.fixes_file(area, s)
+    assert len(json.load(open(f))["fixes"]) == 3 and os.path.getmtime(f) > t - 10
+
+
 def test_tile_runs_align_drives():
     """two drives over the same road, starting at different points: their scene cuts coincide (fixed map grid)."""
     road = lambda x0, x1: np.c_[np.arange(x0, x1, 0.5), np.zeros(len(np.arange(x0, x1, 0.5)))]

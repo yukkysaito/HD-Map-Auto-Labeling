@@ -564,14 +564,22 @@ def boundary_args(area) -> list:
             "--boundary-zigzag", bs["max_zigzag"], "--boundary-min-run", bs["min_run_m"]]  # fmt: skip
 
 
-def fixes_file(area) -> str:
-    """work/fixes.json: the fixes (deletions / changes) of all review files in one file, rewritten only when they
-    change - the input of vectorize, so a new 'ok' decision does not redo every scene's vectors."""
+FIX_MARGIN_M = 2.0  # the label grid is the scene's bbox rounded out to its cells
+
+
+def fixes_file(area, s) -> str:
+    """work/scenes/<scene>/fixes.json: the fixes (deletions / changes) of all review files whose point lies in the
+    scene's box (+ FIX_MARGIN_M; vectorize keeps those inside its grid), rewritten only when they change - the input of
+    vectorize, so a decision elsewhere (another scene's verification, a newly added drive's scenes) does not redo
+    this scene's vectors and everything after them."""
     from hdlabel.agents.verify import save_json
 
-    f = f"{area.work}/fixes.json"
+    bb = np.array(s["bbox"], float) + [-FIX_MARGIN_M, -FIX_MARGIN_M, FIX_MARGIN_M, FIX_MARGIN_M]
+    inside = lambda x: "at" in x and bb[0] <= x["at"][0] <= bb[2] and bb[1] <= x["at"][1] <= bb[3]  # noqa: E731
+    f = f"{area.scene_dir(s['id'])}/fixes.json"
     with area.lock:
-        fx = [x for r in area.reviews() for x in json.load(open(r)).get("fixes", [])]
+        fx = [x for r in area.reviews() for x in json.load(open(r)).get("fixes", []) if inside(x)]
+        os.makedirs(os.path.dirname(f), exist_ok=True)
         save_json(f, dict(fixes=fx))
     return f
 
@@ -649,6 +657,7 @@ def label(area, s, force):
         [f"{S}/labels/ground_map.npz", *adds],
         force=force,
     )  # CPU-bound (image warps, matching): not GPU-limited
+    fx = fixes_file(area, s)
     step(
         area,
         f"vectors_{sid}",
@@ -658,7 +667,7 @@ def label(area, s, force):
             "--out",
             f"{S}/vectors",
             "--fixes",
-            fixes_file(area),
+            fx,
             *marking_args(area),
             *curb_args(area, gts),
             *marking_gate_args(area, gts),
@@ -666,7 +675,7 @@ def label(area, s, force):
             *dbg(),
         ],
         [f"{S}/vectors/vectors.geojson"],
-        [f"{S}/labels/ground_map.npz", f"{S}/labels/arrows.json", fixes_file(area)],
+        [f"{S}/labels/ground_map.npz", f"{S}/labels/arrows.json", fx],
         force=force,
     )
     return f"drives {drives}"
