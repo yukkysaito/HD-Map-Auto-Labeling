@@ -28,7 +28,9 @@ Elements (3D, map frame; z from the map surface):
   road_boundary   LineString  outline of the drivable area, split into runs; props.observed = the outside is an observed
                               non-drivable class (curb, sidewalk, off-road) -> a real boundary; false -> edge of the observed
                               area (unknown, do not train it as a boundary). With --boundary-shape (hdlabel/boundary.py)
-                              zig-zag stretches and short observed runs are unknown too, and the outline is smoothed
+                              zig-zag stretches and short observed runs are unknown too, and the outline is smoothed;
+                              every unknown run then has props.reason = edge_of_view (the rule above) or
+                              no_consistent_edge (the shape rules)
 Review fixes (--fixes, review/<name>/*.json written by a reviewer, see docs/ANNOTATION.md): the element of a kind nearest
 to a point (map frame, <= 1.5 m) is dropped or gets properties set, e.g. {"kind": "marking_area", "at": [x, y],
 "set": {"type": "zebra"}}; "set": {"kind": "crosswalk"} changes the element kind; arrows: {"kind": "arrow", "at": ..,
@@ -571,24 +573,32 @@ def main(argv=None):
             ij = np.clip(xy2px(ring), 0, np.array(cls.shape) - 1)
             obs = off_near[ij[:, 0], ij[:, 1]].astype(np.int8)
             if a.boundary_shape:
+                edge = np.convolve(obs, np.ones(15) / 15, "same") > 0.5  # an observed edge without the shape rules
                 obs &= ~ragged
             obs = np.convolve(obs, np.ones(15) / 15, "same") > 0.5  # 1.5 m majority
             if a.boundary_shape:  # short observed pieces between ragged / unknown stretches: unknown
                 obs = drop_short_runs(obs[:-1], int(round(a.boundary_min_run / res)), closed=True)
                 obs = np.r_[obs, obs[:1]]
-            cut = np.flatnonzero(np.diff(obs.astype(int))) + 1
+                state = np.where(obs, 0, np.where(edge, 2, 1))  # observed | edge_of_view | no_consistent_edge
+            else:
+                state = obs.astype(int)
+            cut = np.flatnonzero(np.diff(state)) + 1
             for seg in np.split(np.arange(len(dense)), cut):
                 if len(seg) < 2:
                     continue
                 xy = dense[seg[0] : seg[-1] + 2] if seg[-1] + 1 < len(dense) else dense[seg[0] :]
                 if plen(xy) < 1.0:
                     continue
+                why = {}
+                if a.boundary_shape and not obs[seg[0]]:
+                    why = dict(reason=("edge_of_view", "no_consistent_edge")[state[seg[0]] - 1])
                 add(
                     "road_boundary",
                     "LineString",
                     simplify(xy, 0.1),
                     observed=bool(obs[seg[0]]),
                     length=round(plen(xy), 2),
+                    **why,
                 )
 
     # ---- review fixes: the element of the kind closest to the point (within 1.5 m)

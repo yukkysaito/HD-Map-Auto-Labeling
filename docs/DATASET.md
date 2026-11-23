@@ -98,7 +98,7 @@ the deck on a bridge; levels never mix.
 | `curb` | `points` line | |
 | `curb_candidate` | `points` line | a curb line the curb filter (`markings.curb_filter`, active tool variant) judged not to be a road kerb; `curb_check` = the rules it failed. Not a boundary for training (the loader skips it); the raster keeps its cells as curb |
 | `marking_candidate` | as its kind | a lane line / stop line / marking area / arrow the marking gate (`markings.marking_gate`, vectorize variant `marking_level`) found off the road level by the LiDAR ground height (ledge, raised sidewalk, plaza behind a kerb step); `candidate_of` = its kind, `marking_check` = the failed rules, `marking_level` = the measurements. Not a marking for training (the loader skips it) |
-| `road_boundary` | `points` line | `observed`: true = real boundary (curb / sidewalk / off-road outside), false = edge of the observed area (**do not learn it as a boundary**) |
+| `road_boundary` | `points` line | `observed`: true = reliable boundary (curb / sidewalk / off-road outside, a consistent edge), false = not a boundary to learn (**do not learn it as a boundary**); `reason` (only on false runs, with `markings.boundary_shape`): `edge_of_view` (edge of the observed area) or `no_consistent_edge` (ragged outline of a plaza / planter / wavy segmentation edge) |
 | `crosswalk` | `rings` polygon | `type` (set by review, e.g. `red_white`) |
 | `marking_area` | `rings` polygon | thick stop lines, text, zebra zones etc. `type` (set by review: zebra / stop_line / text / ...) |
 | `drivable_area` | `rings` polygon (with holes) | |

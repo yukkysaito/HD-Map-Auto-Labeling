@@ -70,13 +70,12 @@ def street():
     return cls
 
 
+def boundary_props(path):
+    return [f for f in json.load(open(path))["features"] if f["properties"]["kind"] == "road_boundary"]
+
+
 def boundary_runs(path):
-    fs = json.load(open(path))["features"]
-    return [
-        (np.array(f["geometry"]["coordinates"])[:, :2], f["properties"]["observed"])
-        for f in fs
-        if f["properties"]["kind"] == "road_boundary"
-    ]
+    return [(np.array(f["geometry"]["coordinates"])[:, :2], f["properties"]["observed"]) for f in boundary_props(path)]
 
 
 def dense(xy):
@@ -116,6 +115,19 @@ def test_vectorize_boundary_shape(tmp_path):
     straight = np.concatenate([dense(xy) for xy, obs in b if obs])
     straight = straight[(straight[:, 0] > 2) & (straight[:, 0] < 28)]
     assert len(straight) and np.abs(straight[:, 1] - 10.0).max() < 0.15  # on the edge
+    # reason: only with --boundary-shape, on every unknown run; the zig-zag stretch has no consistent edge, the
+    # outline along the grid border (unobserved outside) is the edge of the view
+    assert not any("reason" in f["properties"] for f in boundary_props(tmp_path / "a" / "vectors.geojson"))
+    fb = boundary_props(tmp_path / "b" / "vectors.geojson")
+    assert all(("reason" in f["properties"]) != f["properties"]["observed"] for f in fb)
+    why = {}
+    for f in fb:
+        if not f["properties"]["observed"]:
+            xy = dense(np.array(f["geometry"]["coordinates"])[:, :2])
+            on_zigzag = (xy[:, 0] > 33) & (xy[:, 0] < 57) & (np.abs(xy[:, 1] - 10) < 1)
+            why.setdefault(f["properties"]["reason"], []).append(on_zigzag.mean())
+    assert set(why) == {"edge_of_view", "no_consistent_edge"}
+    assert max(why["edge_of_view"]) < 0.1 and max(why["no_consistent_edge"]) > 0.5
     pa = json.load(open(tmp_path / "a" / "vectors.json"))["params"]
     pb = json.load(open(tmp_path / "b" / "vectors.json"))["params"]
     assert "boundary_shape" not in pa and "boundary_smooth" not in pa  # default: the parameters as before
