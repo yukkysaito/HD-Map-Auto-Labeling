@@ -48,6 +48,16 @@ everything flagged on `debug/audit.html` (docs/ANNOTATION.md).
 ./autolabel bench review <config>                   # bench/<name>/review.html: the person checks the reference
 ./autolabel bench apply <config> bench_review.json --by person:NAME   # person's decisions replace the majority + lock
 ```
+Road boundary group (`hdlabel/agents/bench_rb.py`, optional: older benchmarks without it keep working, the group is
+absent from their metrics). References come from LiDAR kerb steps across the driven road in the point cloud map
+(no camera, no pipeline output), proposed per ~40 m window; the person rejects wrong lines, draws boundaries without a
+kerb and marks the windows that are complete (only those are scored):
+```bash
+./autolabel bench rb-propose <config> [--scene S ..] [--out DIR]   # draft: output/<name>/bench_draft/road_boundary/
+./autolabel bench rb-apply <config> rb_review.json --by person:NAME [--out DIR]   # -> bench/<name>/road_boundary.json + lock
+```
+Metrics `road_boundary.precision` / `.recall` (0.3 m) and `.ragged` (lower is better); `bench.better` gives each
+metric's direction for the gate.
 Every evaluation checks the lock. A changed reference, criteria (`hdlabel/agents/criteria.yaml`) or evaluator stops
 it; only a person rebuilds / re-locks (`--by person:NAME` records who approved the reference). Scenes are split dev / holdout; the gate needs no regression on both.
 Metrics are computed on RAW tool output (no review fixes): recall of reference-ok elements, share of reference-wrong

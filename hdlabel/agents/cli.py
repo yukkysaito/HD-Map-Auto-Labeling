@@ -3,6 +3,8 @@
 kb search|add|list|show ...          knowledge store (hdlabel/agents/knowledge.py)
 tools [list|adopt|rollback] ...      tool registry (tools/registry.yaml)
 bench build|lock|status|eval|verifier [--role R] [--by NAME]   protected benchmark (hdlabel/agents/bench.py)
+bench rb-propose [--scene S ..] [--out DIR] | rb-apply rb_review.json --by person:NAME [--out DIR]
+                                     road boundary group: LiDAR proposal -> person review -> lock (bench_rb.py)
 experiment --id ID [--variant TOOL=NAME] [--overlay JSON] [--code DIR] [--target METRIC] [--adopt]
                                      candidate in isolation -> metrics -> gate vs the baseline (-> adopt)
 impact [--variant TOOL=NAME]         the steps / scenes a change would redo (dry run of the stamps)
@@ -63,6 +65,14 @@ def bench_cmd(area, a):
         print(f"locked by {lk['locked_by']} {lk['date']}; judges {ref['judges']}")
         for k, v in sorted(c.items(), key=str):
             print(f"  {k}: {v}")
+        rbf = f"{bench.bench_dir(area.name)}/road_boundary.json"
+        if os.path.exists(rbf):
+            rb = json.load(open(rbf))
+            ws = [w for w in rb["windows"] if w["complete"]]
+            print(
+                f"  road_boundary: {len(ws)} complete windows of {len(rb['windows'])} (holdout "
+                f"{sum(w['split'] == 'holdout' for w in ws)}), {sum(len(w['lines']) for w in ws)} lines, by {rb['by']}"
+            )
         for j in ref["judges"]:  # each reference judge against the majority of the others (leave-one-out)
             res = {e["key"]: dict(decision=e["judges"][j]) for e in ref["items"] if j in e["judges"]}
             acc = bench.verifier_accuracy(area.name, res, j)
@@ -94,6 +104,22 @@ def bench_cmd(area, a):
         knowledge().add("verification", f"verifier accuracy {judge}", json.dumps({k: v for k, v in acc.items() if k != "confusion"}),
                         ["verifier", m["provider"], str(m["model"])], data=acc, area=area.name)  # fmt: skip
         print(json.dumps({k: v for k, v in acc.items()}, indent=1))
+    elif act == "rb-propose":
+        from hdlabel.agents import bench_rb
+
+        out = a.out or bench_rb.draft_dir(area)
+        d = bench_rb.propose_area(area, out, a.scene, f"{bench.bench_dir(area.name)}/reference.json")
+        print(f"{len(d['windows'])} windows, {sum(len(w['lines']) for w in d['windows'])} proposed lines ({d['stats']})"
+              f"\nopen {out}/review.html, save rb_review.json, then: bench rb-apply <config> rb_review.json "
+              f"--by person:NAME" + (f" --out {out}" if a.out else ""))  # fmt: skip
+    elif act == "rb-apply":
+        from hdlabel.agents import bench_rb
+
+        if len(a.rest) < 2 or not (a.by or "").startswith("person:"):
+            raise SystemExit("bench rb-apply <config> rb_review.json --by person:NAME [--out DRAFT_DIR]")
+        dec = json.load(open(a.rest[1]))
+        stat = bench_rb.apply(area.name, a.out or bench_rb.draft_dir(area), dec.get("windows", dec), a.by)
+        print(f"road boundary reference written and locked by {a.by}: {stat}")
     elif act == "review":
         print(
             f"open {bench_review.review_page(area.name)} in a browser; then: bench apply <config> bench_review.json --by person:NAME"
@@ -105,7 +131,9 @@ def bench_cmd(area, a):
         stat = bench_review.apply_review(area.name, dec.get("decisions", dec), a.by)
         print(f"reference updated and locked by {a.by}: {stat}")
     else:
-        raise SystemExit(f"bench {act}: unknown (build | lock | status | verifier | review | apply)")
+        raise SystemExit(
+            f"bench {act}: unknown (build | lock | status | verifier | review | apply | rb-propose | rb-apply)"
+        )
 
 
 def tools_cmd(area, a):

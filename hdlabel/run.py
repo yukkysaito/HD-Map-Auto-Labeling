@@ -1184,7 +1184,9 @@ def main():
         type=int,
         help="parallel items (default: config jobs.cpu or 4); GPU steps are limited to jobs.gpu at once",
     )
-    p.add_argument("--out", help="validate: write the report (json) here")
+    p.add_argument(
+        "--out", help="validate: write the report (json) here; bench rb-propose / rb-apply: the draft directory"
+    )
     p.add_argument("--decisions", help="review: decisions on the scene's evidence pack (docs/AGENT_REVIEW.md)")
     p.add_argument("--partial", action="store_true", help="review: apply although some items have no decision")
     p.add_argument("--signoff", help="signoff: the json saved by debug/audit.html")
