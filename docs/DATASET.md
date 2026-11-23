@@ -1,4 +1,7 @@
-# Training data format (format 4)
+# Training data format (format 5)
+
+Format 5: `road_boundary` `observed: false` means "not a boundary to learn" (with an optional `reason`); the marking
+and crosswalk raster classes follow the paint. Format 4 datasets are re-exported by `./autolabel run`.
 
 Target model: multi-camera, multi-frame input; every cycle it outputs the HD map around the vehicle (200-300 m),
 as a raster (BEV segmentation) or as vectors (MapTR style). Both kinds of ground truth come from the same labels.

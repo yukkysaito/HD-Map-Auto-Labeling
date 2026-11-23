@@ -980,7 +980,7 @@ def dataset_index(area):
         )
     n = {k: sum(o["qa_ok"] for o in out if o["split"] == k) for k in ("train", "val", "test")}
     idx = dict(
-        format=4,
+        format=5,
         name=area.name,
         cameras=[int(c) for c in area.cfg["cameras"]],
         classes=CLASSES,

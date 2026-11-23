@@ -15,7 +15,7 @@
 #
 # raster: the classes of the label raster (map.npz, docs/DATASET.md), in id order. The code (hdlabel/common.py CLASSES)
 #   must match this list; a test and `validate` check it. A class not listed here is not labelled.
-version: 4
+version: 5
 principles:
   - Follow the paint and the physical road as they are. No semantic interpretation in the geometry; grouping or
     meaning (line_id, style, arrow directions) goes into attributes.
@@ -114,7 +114,8 @@ kinds:
     group: none
     geometry: LineString
     definition: the outline of the drivable area, split into runs.
-    attributes: {length: m, observed: true = a real boundary (curb / sidewalk / off-road outside); false = edge of the observed area}
+    attributes: {length: m, observed: "true = a reliable boundary (curb / sidewalk / off-road outside, a consistent edge); false = not a boundary to learn"}
+    optional: {reason: "only when observed is false: edge_of_view (edge of the observed area) | no_consistent_edge (ragged outline of a plaza / planter / wavy segmentation edge)"}
 raster:
   - {id: 0, name: unobserved, definition: seen by no camera or off the road surface; not a class to learn (excluded from the loss)}
   - {id: 1, name: road, definition: roadway surface, including manhole covers, drains and patches}

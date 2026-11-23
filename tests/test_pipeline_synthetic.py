@@ -39,7 +39,7 @@ def road(c):  # map -> road frame of tests/synthetic.py
 
 def test_dataset(out):
     ds = json.load(open(f"{out}/dataset/dataset.json"))
-    assert ds["format"] == 4 and ds["qa_ok"] > 0 and ds["qa_ok"] == ds["samples"]
+    assert ds["format"] == 5 and ds["qa_ok"] > 0 and ds["qa_ok"] == ds["samples"]
     # the verification loop ran (replay verifier) and only accepted scenes are training data, with their lineage
     assert ds["scenes"] and all(s["verification"]["state"] == "accepted" for s in ds["scenes"]) and not ds["excluded"]
     assert ds["lineage"]["tools"]["vectorize"]["code"] and ds["version"]
