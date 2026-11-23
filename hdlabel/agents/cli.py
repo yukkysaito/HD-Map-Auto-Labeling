@@ -160,6 +160,7 @@ def experiment_cmd(area, a):
         a.rebase
         or not os.path.exists(bm)
         or json.load(open(bm)).get("lock") != bench.check_lock(area.name)["data"][:12]
+        or json.load(open(bm)).get("tools") != registry.versions()  # an adoption or a code change since
     ):
         experiment.prepare(area, base_id, {}, scenes)
         experiment.run(area, base_id)

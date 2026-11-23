@@ -148,14 +148,16 @@ def spec_gate(g: dict, feats: list[dict]) -> dict:
 
 
 def measure(area, exp_id: str) -> dict:
-    """benchmark metrics of an experiment (all reference elements and the holdout split) -> experiment dir."""
-    from hdlabel.agents import bench
+    """benchmark metrics of an experiment (all reference elements and the holdout split) -> experiment dir; with the
+    benchmark lock and the active tool variants + code hashes it was measured under (the baseline is redone when
+    either changes)."""
+    from hdlabel.agents import bench, registry
 
     E = exp_root(area, exp_id)
     meta = json.load(open(f"{E}/experiment.json"))
     feats = features(f"{E}/work", meta["scenes"])
     prof = curb_profiles(area.map, f"{E}/work", meta["scenes"])
     res = dict(all=bench.evaluate(area.name, feats, prof), holdout=bench.evaluate(area.name, feats, prof, split="holdout"),
-               seconds=meta.get("seconds"), lock=bench.check_lock(area.name)["data"][:12])  # fmt: skip
+               seconds=meta.get("seconds"), lock=bench.check_lock(area.name)["data"][:12], tools=registry.versions())  # fmt: skip
     json.dump(res, open(f"{E}/metrics.json", "w"), indent=1)
     return res
