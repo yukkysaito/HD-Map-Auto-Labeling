@@ -93,7 +93,8 @@ def evaluate(net, ds, n: int | None = None, known: bool = False, by_level: float
     ones and the labelled cells under an overhead level (bit 1 of bev_level) or above a lower one (bit 2); needs the
     scenes' levels.npz (samples without it are counted in `no_levels`). Auxiliary heads, if the model has them:
     height_mae (road surface height, m; also per by_level group), level_f1 (another level above / below, per cell at
-    the label resolution, samples with levels.npz), level_dz_mae (height offset of that level, m, where it exists)."""
+    the label resolution, samples with levels.npz, cells where levels were looked for), level_dz_mae (height offset of
+    that level, m, where it exists). The level scores need ds built with levels=True."""
     was = net.training
     net.eval()
     sc = Scores(ds.bev["res"])
@@ -120,6 +121,8 @@ def evaluate(net, ds, n: int | None = None, known: bool = False, by_level: float
         if "level" in net.aux and has_levels:
             p = upsample(net.aux["level"][0].cpu() > 0, net.fc)
             t = level_bits(x["bev_level"], 1)[0] > 0
+            k = x["bev_level_known"][0]  # only where levels were looked for
+            p, t = p & k, t & k
             lev += torch.stack([(p & t).sum((1, 2)), p.sum((1, 2)), t.sum((1, 2))], 1).float()
         if "level_dz" in net.aux and has_levels:
             t = block_mean(x["bev_level_dz"][0].float(), net.fc)

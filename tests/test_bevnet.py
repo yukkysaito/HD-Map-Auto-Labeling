@@ -191,12 +191,20 @@ def test_level_heads_are_off_by_default_droppable_and_leave_the_map_unchanged(tm
     level[:, :40], level[:, 100:] = 1, 2
     dz = torch.full((1, 2, 160, 64), float("nan"))
     dz[:, 0, :40], dz[:, 1, 100:] = 5.0, -7.0
-    lv = level_loss(net.aux["level"], level, torch.tensor([0.4]), net.fc)
+    known = torch.ones(1, 160, 64, dtype=torch.bool)
+    lv = level_loss(net.aux["level"], level, known, torch.tensor([0.4]), net.fc)
     hz = level_dz_loss(net.aux["level_dz"], dz, net.fc)
     (lv + hz).backward()
     assert torch.isfinite(lv) and torch.isfinite(hz) and net.bev.inp[0][0].weight.grad.abs().sum() > 0
     assert net.level_head[1].weight.grad.abs().sum() > 0 and net.height_levels.weight.grad.abs().sum() > 0
-    assert level_loss(net.aux["level"], level, torch.tensor([float("nan")]), net.fc) == 0  # no levels.npz
+    assert level_loss(net.aux["level"], level, known, torch.tensor([float("nan")]), net.fc) == 0  # no levels.npz
+    assert level_loss(net.aux["level"], level, ~known, torch.tensor([0.4]), net.fc) == 0  # levels never looked for
+    part = known.clone()
+    part[:, 40:] = False  # only the cells under the level above are known: the loss is the BCE there alone
+    lg = net.aux["level"].detach()
+    ref = torch.nn.functional.binary_cross_entropy_with_logits(lg[:, :, :10], torch.stack([torch.ones(1, 10, 16),
+                                                                torch.zeros(1, 10, 16)], 1))  # fmt: skip
+    assert torch.isclose(level_loss(lg, level, part, torch.tensor([0.4]), net.fc), ref)
     assert level_dz_loss(net.aux["level_dz"], torch.full_like(dz, float("nan")), net.fc) == 0
 
     # checkpoints: with the heads, dropped to map only (same map output), and from before the heads existed

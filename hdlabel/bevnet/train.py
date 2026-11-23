@@ -127,7 +127,8 @@ def main(argv=None):
     dev = "cuda"
 
     bev = dict(json.load(open(a.dataset_json[0]))["bev"], x=a.bev_x, y=a.bev_y, res=a.label_res)
-    kw = dict(bev=bev, image_size=tuple(a.image_size), history=a.history)
+    levels = bool(a.level or a.height_levels)  # the loader looks up the other road levels only then
+    kw = dict(bev=bev, image_size=tuple(a.image_size), history=a.history, levels=levels)
     trs = [
         BEVDataset(d, split="train", rot_deg=a.rot, flip=a.flip, still_every_s=a.still_every, **kw)
         for d in a.dataset_json
@@ -135,7 +136,7 @@ def main(argv=None):
     vas = [BEVDataset(d, split="val", **kw) for d in a.dataset_json]
     assert all(t.cams == trs[0].cams for t in trs), "datasets with different cameras"
     tr, va = trs[0], vas[0]
-    if a.level or a.height_levels:
+    if levels:
         n = sum(os.path.exists(f"{s['dir']}/levels.npz") for t in trs for s in t.scenes.values())
         if not n:
             raise SystemExit("--level / --height-levels: no train scene has levels.npz (python -m hdlabel.levels)")
@@ -188,7 +189,8 @@ def main(argv=None):
             if "height" in net.aux:
                 loss = loss + a.height * height_loss(net.aux["height"], x["bev_height"].to(dev), net.fc)
             if "level" in net.aux:
-                loss = loss + a.level * level_loss(net.aux["level"], x["bev_level"], x["multilevel"], net.fc)
+                lv = (x[k] for k in ("bev_level", "bev_level_known", "multilevel"))
+                loss = loss + a.level * level_loss(net.aux["level"], *lv, net.fc)
             if "level_dz" in net.aux:
                 loss = loss + a.height_levels * level_dz_loss(net.aux["level_dz"], x["bev_level_dz"], net.fc)
             opt.zero_grad(set_to_none=True)

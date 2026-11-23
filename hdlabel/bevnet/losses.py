@@ -97,14 +97,18 @@ def level_bits(level: torch.Tensor, f: int) -> torch.Tensor:
     return F.avg_pool2d(b, f) if f > 1 else b
 
 
-def level_loss(logits: torch.Tensor, level: torch.Tensor, multilevel: torch.Tensor, f: int) -> torch.Tensor:
+def level_loss(logits, level, known, multilevel, f: int) -> torch.Tensor:
     """BCE per bit of the level head [B, 2, X, Y] (logits: another level above, below) against bev_level [B, X*f, Y*f]
-    (block shares as soft targets), over the samples whose scene has levels.npz (multilevel finite)."""
-    ok = torch.isfinite(multilevel.to(logits.device))
-    if not ok.any():
+    (block shares as soft targets), weighted by the share of known cells per block (bev_level_known: levels were looked
+    for there), over the samples whose scene has levels.npz (multilevel finite)."""
+    dev = logits.device
+    w = known.to(dev).float()[:, None]
+    w = (F.avg_pool2d(w, f) if f > 1 else w) * torch.isfinite(multilevel.to(dev)).float()[:, None, None, None]
+    if not (w > 0).any():
         return logits.sum() * 0
-    y = level_bits(level.to(logits.device), f)
-    return F.binary_cross_entropy_with_logits(logits[ok], y[ok])
+    y = level_bits(level.to(dev), f)
+    bce = F.binary_cross_entropy_with_logits(logits, y, reduction="none")
+    return (bce * w).sum() / (w.sum() * logits.shape[1])
 
 
 def level_dz_loss(pred: torch.Tensor, dz: torch.Tensor, f: int) -> torch.Tensor:

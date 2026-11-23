@@ -12,10 +12,12 @@ Each item = one sample (qa.ok only) of a scene of output/<name>/dataset/:
   bev_cls     long  [nx, ny]         raster labels (common.CLASSES, 0 = unobserved -> ignore in the loss), cropped from the
                                      scene's map-frame raster for `bev` (x, y range in m, res; default: dataset.json)
   bev_height  float [nx, ny]         road surface z in base_link (NaN = none)
-  bev_level   uint8 [nx, ny]         other road levels at the cell (<scene>/levels.npz, optional): bit 1 = a level above
-                                     (overpass, elevated road, enclosure, tunnel ceiling), bit 2 = a level below; 0 without
+  with levels=True only (other road levels, <scene>/levels.npz, optional; a lookup per sample):
+  bev_level   uint8 [nx, ny]         bit 1 = a level above (overpass, elevated road, enclosure, tunnel ceiling), bit 2 = a
+                                     level below; 0 without
+  bev_level_known bool [nx, ny]      levels were looked for at the cell (False without levels.npz)
   bev_level_dz half [2, nx, ny]      dz (m) of that level above (> 0, channel 0) / below (< 0, channel 1) the ego surface
-                                     (NaN = none, all NaN without levels.npz)
+                                     (NaN = none or unknown)
   multilevel  float []               share of the crop's cells with another level (NaN without levels.npz); a sample is
                                      multilevel when it is >= MULTILEVEL
   vec_pts     float [V, P, 3]        vector instances as P equally spaced points (base_link); vec_cls long [V] (index into
@@ -87,14 +89,16 @@ class HDMapDataset(torch.utils.data.Dataset):
         fast_decode: bool = False,
         uint8: bool = False,
         still_every_s: float = 0.0,
+        levels: bool = False,
     ):
         """fast_decode: JPEG decoding at 1/2, 1/4 or 1/8 scale (libjpeg DCT scaling) when the target size allows it -
         several times faster for long histories (T x C images per item), slightly different resampling.
         uint8: images as uint8 0..255 (4x less memory between loader workers; the model divides by 255).
         still_every_s: while the vehicle stands (< 0.1 m from the last kept sample), keep a sample only every this many
-        seconds (0: keep all; waits at lights otherwise repeat one view many times)."""
+        seconds (0: keep all; waits at lights otherwise repeat one view many times).
+        levels: also return the other road levels (bev_level, bev_level_known, bev_level_dz, multilevel)."""
         idx = json.load(open(dataset_json))
-        self.fast_decode, self.uint8 = fast_decode, uint8
+        self.fast_decode, self.uint8, self.levels = fast_decode, uint8, levels
         root = os.path.dirname(os.path.abspath(dataset_json))
         cams = cams or idx["cameras"]  # default: every camera of the dataset
         self.cams, self.T, self.size, self.max_v, self.npts = cams, history, image_size, max_vectors, npts
@@ -123,19 +127,20 @@ class HDMapDataset(torch.utils.data.Dataset):
         return self._maps[sid]
 
     def level_crop(self, sid, T: np.ndarray) -> dict:
-        """bev_level / bev_level_dz / multilevel (module doc) of the BEV crop of pose T in scene sid."""
+        """bev_level / bev_level_known / bev_level_dz / multilevel (module doc) of the BEV crop of pose T in scene sid."""
         if sid not in self._levels:
             f = f"{self.scenes[sid]['dir']}/levels.npz"
             self._levels[sid] = Levels(f) if os.path.exists(f) else None
         lv, b = self._levels[sid], self.bev
         if lv is None:
             n = grid(b["x"], b["y"], b["res"])[0].shape
-            dz = np.full((2, *n), np.nan, np.float16)
+            dz, known = np.full((2, *n), np.nan, np.float16), np.zeros(n, bool)
         else:
-            dz = lv.crop_dz(self.scene_map(sid), T, b["x"], b["y"], b["res"])
+            dz, known = lv.lookup(self.scene_map(sid), T, b["x"], b["y"], b["res"])
         m = Levels.bits(dz)
         share = float((m > 0).mean()) if lv is not None else float("nan")
-        return dict(bev_level=torch.from_numpy(m), bev_level_dz=torch.from_numpy(dz), multilevel=torch.tensor(share))
+        return dict(bev_level=torch.from_numpy(m), bev_level_known=torch.from_numpy(known),
+                    bev_level_dz=torch.from_numpy(dz), multilevel=torch.tensor(share))  # fmt: skip
 
     def item_vectors(self, i) -> list[dict]:
         """all vector elements of item i in base_link, clipped to the BEV range, full detail (bev.SceneMap.vectors)."""
@@ -219,7 +224,7 @@ class HDMapDataset(torch.utils.data.Dataset):
             vec_cls=torch.from_numpy(vcls),
             vec_mask=torch.from_numpy(vmask),
             vec_dir=torch.from_numpy(vdir),
-            **self.level_crop(sid, T_cur),
+            **(self.level_crop(sid, T_cur) if self.levels else {}),
             scene=sid,
             stamp=r["stamp"],
         )

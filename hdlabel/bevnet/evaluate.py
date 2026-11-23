@@ -46,8 +46,9 @@ def main(argv=None):
     cfg = ck["config"]
     ds_json = a.dataset or os.path.join(os.path.dirname(a.model), "..", "..", "dataset", "dataset.json")
     split = None if a.split == "all" else a.split
+    levels = bool(cfg.get("level_head") or cfg.get("height_levels") or a.by_level is not None)
     va = BEVDataset(ds_json, split=split, bev=cfg["bev"], image_size=tuple(cfg["image_size"]),
-                    history=cfg.get("history", 1), still_every_s=a.still_every)  # fmt: skip
+                    history=cfg.get("history", 1), still_every_s=a.still_every, levels=levels)  # fmt: skip
     print(json.dumps(evaluate(net, va, a.val, ck.get("known", False), a.by_level)))
 
 

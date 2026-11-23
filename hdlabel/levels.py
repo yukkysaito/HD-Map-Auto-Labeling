@@ -13,7 +13,8 @@ where another level lies above or below it, so samples can be tagged (`multileve
 So `over` also marks noise enclosures, tunnel ceilings and roofs over the road: everything a camera sees as a level
 above. `under` marks the ground below a bridge / viaduct deck.
 levels.npz: over / under float16 [nx, ny] (RES m cells: dz of that level above / below the ego surface, m; NaN =
-none), lo, res, origin (cell (i, j) covers map x = origin.x + lo.x + i * res, as map.npz).
+none), known bool [nx, ny] (the ego reference exists there, so levels were looked for: NaN elsewhere means unknown, not
+none; older files lack it = all known), lo, res, origin (cell (i, j) covers map x = origin.x + lo.x + i * res, as map.npz).
 
 usage: python -m hdlabel.levels <dataset.json> --map <pointcloud_map.pcd> [--out DIR]
        writes <scene>/levels.npz for every scene (into DIR/<scene>/ with --out)
@@ -82,7 +83,8 @@ def level_parts(Z, spread, step=1.5, min_area=150.0, max_spread=2.0):
 def other_levels(P, H, lo, sres, min_dz=2.0, clearance=4.0, max_dz=30.0, window=10.0, fill_m=20.0, **kw):
     """P: map points relative to origin [N, >=3]; H: ego surface height [X, Y] (relative to origin, NaN = none) on
     sres m cells from lo. Returns over, under float32 [nx, ny] on RES m cells from lo (dz of the other level to the ego
-    surface, NaN = none). kw: level_parts()."""
+    surface, NaN = none) and known bool [nx, ny] (cells with an ego reference: levels were looked for). kw:
+    level_parts()."""
     shape = tuple(np.ceil(np.array(H.shape) * sres / RES).astype(int))
     ref = ego_reference(H, sres, shape, fill_m)
     q = np.floor((P[:, :2] - lo) / RES).astype(np.int64)
@@ -100,7 +102,7 @@ def other_levels(P, H, lo, sres, min_dz=2.0, clearance=4.0, max_dz=30.0, window=
         np.maximum.at(far, (q[s, 0], q[s, 1]), v[s])
         Z[~np.isfinite(Z) | (Z < clearance)] = np.nan  # something lower than a clearance: not a level above / below
         out.append(np.where(level_parts(Z, far - Z, **kw), sign * Z, np.nan).astype(np.float32))
-    return out[0], out[1]
+    return out[0], out[1], np.isfinite(ref)
 
 
 def scene_levels(scene_dir: str, map_path: str, **kw) -> dict:
@@ -111,8 +113,10 @@ def scene_levels(scene_dir: str, map_path: str, **kw) -> dict:
     xs, ys = np.meshgrid(np.arange(0, ext[0] + 20, 20), np.arange(0, ext[1] + 20, 20), indexing="ij")
     files = map_files(map_path, np.c_[xs.ravel(), ys.ravel()] + lo + origin[:2], 20.0)
     P = np.concatenate([read_pcd(f) for f in files]).astype(np.float64) - origin
-    over, under = other_levels(P, H, lo, sres, **kw)
-    return dict(over=over.astype(np.float16), under=under.astype(np.float16), lo=lo, res=RES, origin=origin)
+    over, under, known = other_levels(P, H, lo, sres, **kw)
+    return dict(
+        over=over.astype(np.float16), under=under.astype(np.float16), known=known, lo=lo, res=RES, origin=origin
+    )
 
 
 def write(scene_dir: str, map_path: str, out_dir: str | None = None) -> str:
@@ -131,28 +135,31 @@ class Levels:
     def __init__(self, path: str):
         m = np.load(path)
         self.over, self.under = m["over"].astype(np.float16), m["under"].astype(np.float16)
+        self.known = m["known"].astype(bool) if "known" in m.files else np.ones(self.over.shape, bool)  # older files
         self.lo, self.res, self.origin = m["lo"], float(m["res"]), m["origin"]
 
-    def crop_dz(self, smap: SceneMap, T: np.ndarray, x, y, res: float) -> np.ndarray:
-        """float16 [2, nx, ny] on the grid of smap.crop(T, x, y, res) (the scene's SceneMap, same origin): dz (m) of
-        the other level above (> 0) / below (< 0) the ego surface at the map xy where each cell meets it, NaN = none."""
+    def lookup(self, smap: SceneMap, T: np.ndarray, x, y, res: float) -> tuple[np.ndarray, np.ndarray]:
+        """on the grid of smap.crop(T, x, y, res) (the scene's SceneMap, same origin), at the map xy where each cell
+        meets the ego surface: dz float16 [2, nx, ny] (m) of the other level above (> 0) / below (< 0), NaN = none;
+        known bool [nx, ny] (levels were looked for there; False outside the file's extent)."""
         Xg, Yg = grid(x, y, res)
         P, _ = smap.surface_points(T, np.stack([Xg.ravel(), Yg.ravel()], 1))
         ij = np.floor((P[:, :2] - self.lo) / self.res).astype(int)
         ins = np.all((ij >= 0) & (ij < self.over.shape), 1)
-        out = np.full((2, len(P)), np.nan, np.float16)
+        dz = np.full((2, len(P)), np.nan, np.float16)
+        known = np.zeros(len(P), bool)
         i, j = ij[ins, 0], ij[ins, 1]
-        out[0, ins], out[1, ins] = self.over[i, j], self.under[i, j]
-        return out.reshape(2, *Xg.shape)
+        dz[0, ins], dz[1, ins], known[ins] = self.over[i, j], self.under[i, j], self.known[i, j]
+        return dz.reshape(2, *Xg.shape), known.reshape(Xg.shape)
 
     @staticmethod
     def bits(dz: np.ndarray) -> np.ndarray:
-        """crop_dz -> uint8 [nx, ny]: bit 1 = another level above, bit 2 = below."""
+        """lookup dz -> uint8 [nx, ny]: bit 1 = another level above, bit 2 = below."""
         return np.isfinite(dz[0]).astype(np.uint8) + 2 * np.isfinite(dz[1]).astype(np.uint8)
 
     def crop(self, smap: SceneMap, T: np.ndarray, x, y, res: float) -> np.ndarray:
         """uint8 [nx, ny] on the grid of smap.crop(T, x, y, res): bit 1 = another level above, bit 2 = below."""
-        return self.bits(self.crop_dz(smap, T, x, y, res))
+        return self.bits(self.lookup(smap, T, x, y, res)[0])
 
 
 def main(argv=None):
