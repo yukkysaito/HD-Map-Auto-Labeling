@@ -90,6 +90,48 @@ def test_fixes_file_per_scene(area):
     assert len(json.load(open(f))["fixes"]) == 3 and os.path.getmtime(f) > t - 10
 
 
+def test_reviews_near_same_decisions(area):
+    """review.py --others gets only the review files near the scene's label grid: every element of the grid and every
+    suspect inside it is decided / covered by a map tile exactly as with all review files."""
+    import json
+
+    from hdlabel.review_html import decided
+
+    rng = np.random.default_rng(0)
+    os.makedirs(area.review, exist_ok=True)
+    bbox = [0, 0, 100, 100]
+    for k in range(40):  # review files of scenes around: decisions on the grid's edge, outside, far away
+        c = rng.uniform(-150, 250, 2)
+        at = lambda: (c + rng.uniform(-30, 30, 2)).round(2).tolist()  # noqa: E731
+        r = dict(checked=[dict(kind="lane_line", at=at()) for _ in range(5)],
+                 fixes=[dict(kind="lane_line", at=at(), action="delete"), dict(kind="arrow", add={})],
+                 tiles=[dict(center=at()) for _ in range(2)])  # fmt: skip
+        json.dump(r, open(f"{area.review}/s{k:02d}.json", "w"))
+    edge = [[0, 0], [100, 100], [100, 37.5], [-1.5, 50]]  # elements on the grid's edge (rounded out to its cells)
+    for x in edge:
+        json.dump(dict(checked=[dict(kind="lane_line", at=[x[0] + 0.01, x[1]])]), open(f"{area.review}/e{x}.json", "w"))
+    for x in ([111.8, 50], [-11.8, -11.8]):  # map tiles just outside the grid: they cover suspects on its edge
+        json.dump(dict(tiles=[dict(center=x)]), open(f"{area.review}/t{x}.json", "w"))
+    near = run.reviews_near(area, bbox)
+    assert 0 < len(near) < len(area.reviews())
+    load = lambda fs: [json.load(open(f)) for f in fs]  # noqa: E731
+    every, close = load(area.reviews()), load(near)
+    pts = rng.uniform(-1.9, 101.9, (3000, 2)).round(2).tolist() + edge
+    pts += [
+        e["at"]
+        for r in every
+        for e in r.get("checked", []) + r.get("fixes", [])
+        if -2 <= min(e.get("at", [-9])) <= max(e["at"]) <= 102
+    ]
+    for p in pts:
+        assert any(decided(r, "lane_line", p) for r in every) == any(decided(r, "lane_line", p) for r in close)
+    tiles = lambda rs: [t["center"] for r in rs for t in r.get("tiles", [])]  # noqa: E731
+    for p in rng.uniform(-1.9, 101.9, (3000, 2)).tolist() + [[101.9, 50], [-1.9, -1.9]]:  # suspects inside the grid
+        assert any(np.abs(np.subtract(c, p)).max() < 10 for c in tiles(every)) == any(
+            np.abs(np.subtract(c, p)).max() < 10 for c in tiles(close)
+        )
+
+
 def test_impact_is_a_dry_run(tmp_path, monkeypatch, capsys):
     """./autolabel impact changes nothing in the output tree (no folders, stamps, plans, fixes files, no removal of a
     shared scene's former labels) and still lists the steps that would run (vectorize: its fixes file would change)."""

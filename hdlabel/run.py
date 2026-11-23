@@ -590,6 +590,30 @@ def fixes_file(area, s) -> str:
     return f
 
 
+REVIEW_MARGIN_M = FIX_MARGIN_M + 10  # review.py: a map tile within 10 m of a place counts as looked at
+_REVIEW_PTS = {}  # review file -> (stat, its points): read once per change, not once per scene
+
+
+def review_points(f) -> np.ndarray:
+    """(n, 2) map points of a review file: its checked / fix / issue elements and the centres of its map tiles."""
+    st = os.stat(f)
+    key = (st.st_mtime_ns, st.st_size)
+    if _REVIEW_PTS.get(f, (None,))[0] != key:
+        r = json.load(open(f))
+        pts = [e["at"][:2] for k in ("checked", "fixes", "issues") for e in r.get(k, []) if e.get("at")]
+        pts += [x["center"][:2] for x in r.get("tiles", []) if x.get("center")]
+        _REVIEW_PTS[f] = (key, np.array(pts, float).reshape(-1, 2))
+    return _REVIEW_PTS[f][1]
+
+
+def reviews_near(area, bbox, margin=REVIEW_MARGIN_M) -> list:
+    """the review files with a point (review_points) inside bbox + margin: what review.py --others can match in a
+    scene (an element decided within 2 cm, a map tile within 10 m), so a review file elsewhere (another scene, a newly
+    added drive) neither is an input of nor redoes this scene's review step."""
+    bb = np.array(bbox, float) + [-margin, -margin, margin, margin]
+    return [f for f in area.reviews() if np.all((review_points(f) >= bb[:2]) & (review_points(f) <= bb[2:]), 1).any()]
+
+
 def label(area, s, force):
     sid = s["id"]
     owner = area.owners.get(sid, sid)
@@ -750,6 +774,8 @@ def debug(area, s, force):
     o = area.owners.get(s["id"], s["id"])
     D, S, Do = area.dbg_dir(s["id"]), area.scene_dir(o), area.dbg_dir(o)
     ds = area.ds_dir(s["id"])
+    bb = [b["bbox"] for b in area.scenes() if b["id"] == o] + [s["bbox"]]  # the elements: the owner's label grid
+    others = reviews_near(area, np.r_[np.min(bb, 0)[:2], np.max(bb, 0)[2:]])
     step(
         area,
         f"review_{s['id']}",
@@ -766,7 +792,7 @@ def debug(area, s, force):
             "--review",
             area.review_file(s["id"]),
             "--others",
-            *area.reviews(),
+            *others,
             *(
                 ["--suspects", f"{area.dbg}/model_suspects.json"]
                 if os.path.exists(f"{area.dbg}/model_suspects.json")
@@ -774,7 +800,7 @@ def debug(area, s, force):
             ),
         ],
         [f"{D}/review.html"],
-        [f"{ds}/scene.json"] + area.reviews() + [f"{area.dbg}/model_suspects.json"],
+        [f"{ds}/scene.json", area.review_file(s["id"]), *others, f"{area.dbg}/model_suspects.json"],
         gpu=True,
         force=force,
     )

@@ -44,7 +44,9 @@ When settings or inputs change (new drives, calibration, review fixes) only the 
 step loses its stamp and runs again on the next `run`. A failed drive only affects its own scenes. Steps that may
 rewrite an input of later steps write a file only when its content changes (e.g. `ingest.py`, the review files,
 `work/scenes/<scene>/fixes.json` = the fixes of all review files that lie in the scene's box, which is what vectorize
-reads), so a rerun does not cascade and a decision or a new drive elsewhere does not redo a scene's vectors. Paths
+reads), so a rerun does not cascade and a decision or a new drive elsewhere does not redo a scene's vectors. Likewise
+the review step of a scene reads (`--others`) only the review files with a decision or map tile near its label grid
+(`run.reviews_near`). Paths
 under the output root are replaced by `<OUT>` in the key, so experiments (`output/<name>/experiments/<id>/`) reuse the
 stamps of unchanged steps. `./autolabel impact` lists what a change would redo without running, writing or removing
 anything (`run.DRY_RUN`).
