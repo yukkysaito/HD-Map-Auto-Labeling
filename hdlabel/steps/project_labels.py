@@ -8,6 +8,7 @@ cameras whose time offset could not be estimated (offset_status failed) are not 
 Per 0.1 m cell: class = argmax of the ground-class votes (0 = unobserved), ortho RGB = distance-weighted mean; with
 --paint / --paint-crosswalk also cls_paint: the marking class following the paint seen in the ortho image, the gaps
 between crosswalk stripes as road (hdlabel/paint.py; the training raster of export.py, while the vectors keep cls).
+With --road-level road cells raised behind a kerb step become sidewalk or unobserved first (hdlabel/roadlevel.py).
 --mode gather looks every visible cell up in the image instead of splatting pixels onto cells (no holes or moire at
 range). With --max-shift, a further drive whose markings line up with the first drive's only after a shift (time offset
 or pose error of a drive) is not fused.
@@ -145,6 +146,14 @@ def main(argv=None):
         help="the unpainted gaps between crosswalk stripes become road (hdlabel/paint.py refine_crosswalk)",
     )
     p.add_argument(
+        "--road-level",
+        nargs=9,
+        type=float,
+        metavar="V",
+        help="road cells raised behind a kerb step become sidewalk / unobserved; the values of hdlabel/roadlevel.py"
+        " DEFAULTS in their order (grade, step_m, max_step_m, max_width_m, near_m, min_share, min_cells, keep_m, seed_dz)",
+    )
+    p.add_argument(
         "--max-shift",
         type=float,
         default=0.0,
@@ -181,6 +190,13 @@ def main(argv=None):
     )
     cls = pj.dense(cls_c)
     rgb = pj.dense((acc["rgb"] / acc["w"].clamp(min=1e-9)[:, None]).clamp(0, 255).to(torch.uint8))
+    if a.road_level:
+        from hdlabel.roadlevel import DEFAULTS as RL
+        from hdlabel.roadlevel import refine_scene
+
+        cls, stats["road_level"] = refine_scene(
+            cls, a.ground, [d for d, _ in a.drive], pj.origin, pj.lo, pj.res, **dict(zip(RL, a.road_level))
+        )
     extra = {}
     if a.paint:  # the vectors keep using cls (stroke widths of the segmentation), the training raster cls_paint
         from hdlabel.paint import DEFAULTS, refine

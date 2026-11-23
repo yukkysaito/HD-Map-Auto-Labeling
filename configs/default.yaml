@@ -91,8 +91,10 @@ projection: {mode: gather,     # gather: every visible surface cell looks its cl
                                 # weight exponent of gather (near views dominate where they exist)
              rgb_power: null,   # gather: ortho colour weight (1/r)^rgb_power (nearest views; null: the vote weight)
              paint: {enabled: false,   # marking class from the paint in the ortho image (hdlabel/paint.py DEFAULTS)
-                     crosswalk: {enabled: false}}}  # gaps between crosswalk stripes -> road (paint.py XWALK_DEFAULTS)
+                     crosswalk: {enabled: false}},  # gaps between crosswalk stripes -> road (paint.py XWALK_DEFAULTS)
                                 # both: training raster only (ground_map cls_paint); the vectors keep the segmentation
+             road_level: {enabled: false}}  # road cells raised behind a kerb step (LiDAR surface): sidewalk / abstain
+                                            # (hdlabel/roadlevel.py DEFAULTS; labels and vectors)
 dataset: {every_s: 0.5, val_every_s: null,  # val sample spacing (null = every_s; 0.1 = every model cycle for online_eval)
           history_s: 2.0, history_dt_s: 0.5,
           bev: {x: [-50, 150], y: [-80, 80], res: 0.2},  # default ego-frame crop (the loader may use any range / res)

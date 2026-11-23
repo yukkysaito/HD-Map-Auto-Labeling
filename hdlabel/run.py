@@ -525,6 +525,11 @@ def projection_args(area) -> list:
         from hdlabel.paint import XWALK_DEFAULTS
 
         args += ["--paint-crosswalk", *[cw.get(k, v) for k, v in XWALK_DEFAULTS.items()]]
+    rl = pr.get("road_level") or {}
+    if rl.get("enabled"):
+        from hdlabel.roadlevel import DEFAULTS as RL
+
+        args += ["--road-level", *[rl.get(k, v) for k, v in RL.items()]]
     return args + (["--max-shift", shift] if shift else [])
 
 
