@@ -421,8 +421,8 @@ tools:
     active: default
     history: []
 spec:
-  version: 303c81a246
-  commit: 3a44d6f
-  date: '2026-11-23'
+  version: 814b20ec12
+  commit: 1b44538
+  date: '2026-11-24'
   by: agent:claude-opus-5-5
-  note: marking_candidate added; conform() handles 'as candidate_of'; tests pass
+  note: 'road_boundary reason / observed wording: vectorize (boundary_shape), bev LINE_ATTRS, DATASET format 5, tests'
