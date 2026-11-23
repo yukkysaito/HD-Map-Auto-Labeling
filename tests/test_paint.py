@@ -82,7 +82,7 @@ def test_crosswalk_worn_spot_in_a_stripe_is_filled():
 
 
 def test_config_default_off():
-    cfg = load_config(None)
+    cfg = load_config(None, registry={"tools": {}})  # configs/default.yaml without the adopted variants
     area = types.SimpleNamespace(cfg=cfg)
     assert "--paint-crosswalk" not in projection_args(area)  # unchanged commands
     cfg["projection"]["paint"]["crosswalk"] = dict(enabled=True, contrast=40)
