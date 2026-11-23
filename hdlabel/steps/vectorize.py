@@ -27,7 +27,8 @@ Elements (3D, map frame; z from the map surface):
   drivable_area   Polygon     road + marking + crosswalk (holes = islands), observed cells only
   road_boundary   LineString  outline of the drivable area, split into runs; props.observed = the outside is an observed
                               non-drivable class (curb, sidewalk, off-road) -> a real boundary; false -> edge of the observed
-                              area (unknown, do not train it as a boundary)
+                              area (unknown, do not train it as a boundary). With --boundary-shape (hdlabel/boundary.py)
+                              zig-zag stretches and short observed runs are unknown too, and the outline is smoothed
 Review fixes (--fixes, review/<name>/*.json written by a reviewer, see docs/ANNOTATION.md): the element of a kind nearest
 to a point (map frame, <= 1.5 m) is dropped or gets properties set, e.g. {"kind": "marking_area", "at": [x, y],
 "set": {"type": "zebra"}}; "set": {"kind": "crosswalk"} changes the element kind; arrows: {"kind": "arrow", "at": ..,
@@ -50,6 +51,7 @@ from scipy.spatial import cKDTree
 from skimage.morphology import skeletonize
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+from hdlabel.boundary import drop_short_runs, resample_ring, ring_zigzag, smooth_ring
 from hdlabel.common import stop_lines
 from hdlabel.mapproj import arrow_cls, load_arrows
 
@@ -114,6 +116,20 @@ def main(argv=None):
     )
     p.add_argument("--curb-wavy", type=float, default=30.0, help="--curb-filter: max mean turning (deg / m)")
     p.add_argument("--curb-rules", nargs="*", help="--curb-filter: apply only these rules (default: all)")
+    p.add_argument(
+        "--boundary-shape",
+        action="store_true",
+        help="road boundary rings (hdlabel/boundary.py): stretches that zig-zag (back-and-forth turning > "
+        "--boundary-zigzag deg/m within --boundary-window m) are not observed boundaries; the outline is smoothed "
+        "along the ring (sigma --boundary-smooth m)",
+    )
+    p.add_argument("--boundary-smooth", type=float, default=0.5, help="--boundary-shape: smoothing sigma (m)")
+    p.add_argument("--boundary-window", type=float, default=3.0, help="--boundary-shape: zig-zag window (m)")
+    p.add_argument("--boundary-chord", type=float, default=0.5, help="--boundary-shape: chord of the headings (m)")
+    p.add_argument("--boundary-zigzag", type=float, default=40.0, help="--boundary-shape: max zig-zag (deg / m)")
+    p.add_argument(
+        "--boundary-min-run", type=float, default=3.0, help="--boundary-shape: shorter observed runs are unknown (m)"
+    )
     p.add_argument(
         "--marking-gate",
         action="store_true",
@@ -541,15 +557,25 @@ def main(argv=None):
             area=round(float(cv2.contourArea((rings[0] / res).astype(np.float32))) * res**2, 1),
         )
         for r in rings:  # boundary runs
-            rr = np.r_[r, r[:1]]
-            dense = []
-            for p0, p1 in zip(rr[:-1], rr[1:]):
-                nn = max(2, int(np.linalg.norm(p1 - p0) / res))
-                dense.append(np.linspace(p0, p1, nn, endpoint=False))
-            dense = np.concatenate(dense + [rr[-1:]])
-            ij = np.clip(xy2px(dense), 0, np.array(cls.shape) - 1)
+            if a.boundary_shape:  # hdlabel/boundary.py: ragged stretches are not a real boundary, the rest smoothed
+                ring = resample_ring(r, res)
+                ragged = ring_zigzag(ring, res, a.boundary_window, a.boundary_chord) > a.boundary_zigzag
+                dense = smooth_ring(ring, a.boundary_smooth / res)
+                ragged, dense, ring = np.r_[ragged, ragged[:1]], np.r_[dense, dense[:1]], np.r_[ring, ring[:1]]
+            else:
+                rr, dense = np.r_[r, r[:1]], []
+                for p0, p1 in zip(rr[:-1], rr[1:]):
+                    nn = max(2, int(np.linalg.norm(p1 - p0) / res))
+                    dense.append(np.linspace(p0, p1, nn, endpoint=False))
+                ring = dense = np.concatenate(dense + [rr[-1:]])
+            ij = np.clip(xy2px(ring), 0, np.array(cls.shape) - 1)
             obs = off_near[ij[:, 0], ij[:, 1]].astype(np.int8)
+            if a.boundary_shape:
+                obs &= ~ragged
             obs = np.convolve(obs, np.ones(15) / 15, "same") > 0.5  # 1.5 m majority
+            if a.boundary_shape:  # short observed pieces between ragged / unknown stretches: unknown
+                obs = drop_short_runs(obs[:-1], int(round(a.boundary_min_run / res)), closed=True)
+                obs = np.r_[obs, obs[:1]]
             cut = np.flatnonzero(np.diff(obs.astype(int))) + 1
             for seg in np.split(np.arange(len(dense)), cut):
                 if len(seg) < 2:
@@ -750,6 +776,8 @@ def main(argv=None):
         hide |= {"marking_gate", "mark_tol", "mark_min_level", "mark_step", "mark_ref", "mark_kerb", "mark_rules"}
     if not (a.curb_filter or a.marking_gate):
         hide.add("gt")
+    if not a.boundary_shape:
+        hide |= {k for k in vars(a) if k.startswith("boundary_")}
     params = {k: v for k, v in vars(a).items() if k not in hide}  # default: as before
     info = dict(
         source=os.path.abspath(a.labels),

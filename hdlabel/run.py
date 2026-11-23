@@ -550,6 +550,15 @@ def marking_gate_args(area, gts) -> list:
             ["--mark-kerb", mg["kerb_m"]] if mg.get("kerb_m") else [])  # fmt: skip
 
 
+def boundary_args(area) -> list:
+    """vectorize.py road boundary shape options from the config `markings.boundary_shape` (none when it is off)."""
+    bs = area.cfg["markings"].get("boundary_shape") or {}
+    if not bs.get("enabled"):
+        return []
+    return ["--boundary-shape", "--boundary-smooth", bs["smooth_m"], "--boundary-window", bs["window_m"],
+            "--boundary-zigzag", bs["max_zigzag"], "--boundary-min-run", bs["min_run_m"]]  # fmt: skip
+
+
 def fixes_file(area) -> str:
     """work/fixes.json: the fixes (deletions / changes) of all review files in one file, rewritten only when they
     change - the input of vectorize, so a new 'ok' decision does not redo every scene's vectors."""
@@ -648,6 +657,7 @@ def label(area, s, force):
             *marking_args(area),
             *curb_args(area, gts),
             *marking_gate_args(area, gts),
+            *boundary_args(area),
             *dbg(),
         ],
         [f"{S}/vectors/vectors.geojson"],
@@ -827,6 +837,7 @@ def qa(area, s, force):
                 *marking_args(area),
                 *curb_args(area, [f"{area.data(d)}/gt.npy"]),
                 *marking_gate_args(area, [f"{area.data(d)}/gt.npy"]),
+                *boundary_args(area),
             ],
             [f"{Q}/vectors_{d}/vectors.geojson"],
             [f"{Q}/labels_{d}/ground_map.npz"],

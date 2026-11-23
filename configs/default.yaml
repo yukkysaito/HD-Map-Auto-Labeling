@@ -64,6 +64,12 @@ markings:
                               # min_on_level within tol_m and median beyond tol_m, median beyond step_m, or a step > step_m
                               # on the way from the driven road. Cells without LiDAR / near crosswalks are not judged;
                               # kerb_m > 0: elements mostly within kerb_m of a curb only by the step (edge lines)
+  boundary_shape: {enabled: false, smooth_m: 0.5, window_m: 3.0, max_zigzag: 40.0, min_run_m: 3.0}
+                              # road_boundary shape (hdlabel/boundary.py): stretches of the drivable-area outline that
+                              # zig-zag (back-and-forth turning > max_zigzag deg/m within window_m: road-coloured plazas
+                              # against scattered sidewalk / vegetation cells, the edge of the view) and observed runs
+                              # shorter than min_run_m become observed false; the outline is smoothed along the ring
+                              # (Gaussian sigma smooth_m)
 
 # ---- processing
 segmentation:
