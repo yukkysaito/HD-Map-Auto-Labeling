@@ -171,13 +171,16 @@ class Projector:
         near: float = 8.0,
         tol: float = 0.3,
         power: float = 2.0,
+        rgb_power: float | None = None,
     ) -> int:
         """add one image to acc by looking up every surface cell within rmax in the image (cell -> pixel), the inverse
         of project() (pixel -> cell). Every visible cell gets exactly one sample, so far cells have no holes and no
         moire from the pixel footprint growing past the cell size. A cell counts as visible when the ray through its
         pixel meets the surface within tol + 2% of the range of it (not hidden behind a rise of the surface);
         non-ground pixels (vehicles, poles, ...) give no vote. Same vote mass as project(); distance weight
-        (near / max(r, near))^power: a higher power lets the sharper near views dominate wherever they exist."""
+        (near / max(r, near))^power: a higher power lets the sharper near views dominate wherever they exist.
+        rgb_power: the ortho colour is weighted by (1 / max(r, 1 m))^rgb_power instead (the nearest views dominate even
+        within `near`: averaging many views of slightly different registration blurs paint and text)."""
         dev = self.dev
         C = torch.from_numpy(T_map_cam[:3, 3] - self.origin).to(dev)
         lo = torch.tensor(self.lo, device=dev, dtype=C.dtype)
@@ -222,8 +225,9 @@ class Projector:
         acc["n"].index_add_(0, ci, torch.ones_like(wt).float())
         if img is not None and "rgb" in acc:
             col = torch.from_numpy(img).to(dev)[v, u].double()
-            acc["rgb"].index_add_(0, ci, col * wt[:, None].double())
-            acc["w"].index_add_(0, ci, wt.double())
+            wc = wt.double() if rgb_power is None else (1.0 / torch.clamp(r, min=1.0).double()) ** rgb_power
+            acc["rgb"].index_add_(0, ci, col * wc[:, None])
+            acc["w"].index_add_(0, ci, wc)
         return int(len(ci))
 
     def render(

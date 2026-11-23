@@ -513,6 +513,7 @@ def projection_args(area) -> list:
     args = ["--mode", pr.get("mode", "splat")]
     if pr.get("mode") == "gather":
         args += ["--power", pr.get("power", 2.0)]
+        args += ["--rgb-power", pr["rgb_power"]] if pr.get("rgb_power") else []
     shift = (area.cfg.get("fusion") or {}).get("max_shift_m")
     pt = pr.get("paint") or {}
     if pt.get("enabled"):

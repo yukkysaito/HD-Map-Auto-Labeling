@@ -83,6 +83,7 @@ fusion:  {max_drives: 5,       # labels of a scene from at most N drives on its 
 projection: {mode: gather,     # gather: every visible surface cell looks its class up in the image (no holes / moire
              power: 4,          # at range); splat: every ground pixel votes for the cell its ray hits. power: distance
                                 # weight exponent of gather (near views dominate where they exist)
+             rgb_power: null,   # gather: ortho colour weight (1/r)^rgb_power (nearest views; null: the vote weight)
              paint: {enabled: false}}  # marking class from the paint in the ortho image (hdlabel/paint.py DEFAULTS)
 dataset: {every_s: 0.5, val_every_s: null,  # val sample spacing (null = every_s; 0.1 = every model cycle for online_eval)
           history_s: 2.0, history_dt_s: 0.5,

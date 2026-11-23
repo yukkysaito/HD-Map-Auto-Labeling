@@ -56,7 +56,7 @@ def project_drive(pj, data, calib, acc, a, stats):
         n = 0
         for k, (seg, img) in zip(idx, loader([cam.seg[i] for i in idx], [cam.files[i] for i in idx])):
             if a.mode == "gather":
-                n += pj.gather(T[k], cam.K, seg, img, acc, a.rmax, a.near, power=a.power)
+                n += pj.gather(T[k], cam.K, seg, img, acc, a.rmax, a.near, power=a.power, rgb_power=a.rgb_power)
             else:
                 n += pj.project(T[k], cam.K, seg, img, acc, a.stride, a.rmax, a.near)
         stats[f"{name}/cam{c}"] = dict(images=len(idx), samples_M=round(n / 1e6, 1))
@@ -127,6 +127,7 @@ def main(argv=None):
     p.add_argument(
         "--power", type=float, default=2.0, help="gather: distance weight exponent (mapproj.Projector.gather)"
     )
+    p.add_argument("--rgb-power", type=float, help="gather: ortho colour weight exponent (mapproj.Projector.gather)")
     p.add_argument(
         "--paint",
         nargs=4,
