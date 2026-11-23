@@ -136,8 +136,22 @@ tools:
     - torch
     variants:
       default: {}
-    active: default
-    history: []
+      paint:
+        projection:
+          paint:
+            enabled: true
+            crosswalk:
+              enabled: true
+    active: paint
+    history:
+    - date: '2026-11-24'
+      active: paint
+      previous: default
+      by: person
+      note: marking and crosswalk raster follow the paint (cls_paint)
+      evidence:
+        experiment: paint-fidelity
+        note: training raster only; vectors unchanged; benchmark cannot measure
   arrows:
     purpose: turn arrows with their shape and direction from sharp single frames
     stage: scene

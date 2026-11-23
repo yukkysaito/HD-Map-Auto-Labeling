@@ -74,8 +74,8 @@ that they match.
 |---|---|---|
 | 0 | unobserved | seen by no camera / off the road surface (**excluded from the loss**) |
 | 1 | road | roadway (manhole covers included) |
-| 2 | marking | lane lines, stop lines, arrows etc. (road markings except crosswalks). Arrows are redrawn with the outline measured in a sharp single frame |
-| 3 | crosswalk | crosswalk |
+| 2 | marking | lane lines, stop lines, arrows etc. (road markings except crosswalks), following the paint seen in the fused ortho image (letters and hatching as strokes; where it is blurred, the segmentation's shape). Arrows are redrawn with the outline measured in a sharp single frame |
+| 3 | crosswalk | crosswalk stripes (the gaps between them are road where the paint is seen; the crosswalk vector is the whole area) |
 | 4 | curb | curb |
 | 5 | sidewalk | sidewalk |
 | 6 | offroad | vegetation, ground and other non-road surfaces |
