@@ -1,8 +1,8 @@
-"""Videos of a trained BEVSegNet on the val scenes, one video frame per dataset sample in time order: the camera
+"""Videos of a trained BEVSegNet on the val (or test) scenes, one video frame per dataset sample in time order: the camera
 images with the predicted classes painted on the ground, the label raster, the prediction and the prediction on the
 labelled cells only (forward = up). Cells the model abstains on or no camera sees within VIS_DEPTH are black.
 
-usage: python -m hdlabel.bevnet.video output/<name>/debug/eval/bevnet<tag>.pt [--scenes S ...] [--out DIR]
+usage: python -m hdlabel.bevnet.video output/<name>/debug/eval/bevnet<tag>.pt [--split val|test] [--scenes S ...] [--out DIR]
        -> DIR/<model>_<scene>.mp4 (default DIR: <model dir>/videos)
 """
 
@@ -100,10 +100,13 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("model", help="bevnet*.pt")
     p.add_argument("--dataset", help="dataset.json (default: output/<name>/dataset/dataset.json of the model)")
-    p.add_argument("--scenes", nargs="+", help="val scene ids (default: every val scene)")
+    p.add_argument("--split", default="val", choices=["val", "test"])
+    p.add_argument("--scenes", nargs="+", help="scene ids (default: every scene of the split)")
     p.add_argument("--out", help="output directory (default: <model dir>/videos)")
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
-    p.add_argument("--fps", type=float, default=4.0, help="video frames per second (samples are 0.5 s apart)")
+    p.add_argument(
+        "--fps", type=float, default=4.0, help="video frames per second (val / test samples: dataset val_every_s apart)"
+    )
     p.add_argument("--threads", type=int, default=8)
     p.add_argument("--no-mask", dest="mask", action="store_false", help="show the cells the model abstains on too")
     p.add_argument("--limit", type=int, default=0, help="samples per scene (0: all)")
@@ -112,7 +115,7 @@ def main(argv=None):
     net, ck = load_checkpoint(a.model, a.device)
     cfg = ck["config"]
     ds_json = a.dataset or os.path.join(os.path.dirname(a.model), "..", "..", "dataset", "dataset.json")
-    va = BEVDataset(ds_json, split="val", scenes=a.scenes, bev=cfg["bev"], image_size=tuple(cfg["image_size"]),
+    va = BEVDataset(ds_json, split=a.split, scenes=a.scenes, bev=cfg["bev"], image_size=tuple(cfg["image_size"]),
                     history=cfg.get("history", 1))  # fmt: skip
     cell = cfg["out_res"] or cfg["cell"]
     scale = max(1, 600 // int(round((cfg["bev"]["x"][1] - cfg["bev"]["x"][0]) / cell)))
