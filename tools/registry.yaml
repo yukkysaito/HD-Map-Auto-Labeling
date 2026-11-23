@@ -208,7 +208,17 @@ tools:
             - wavy
           marking_gate:
             enabled: true
-    active: marking_level
+      marking_level_kerb:
+        markings:
+          curb_filter:
+            enabled: true
+            rules:
+            - loop
+            - wavy
+          marking_gate:
+            enabled: true
+            kerb_m: 0.5
+    active: marking_level_kerb
     history:
     - date: '2026-11-16'
       active: curb_shape
@@ -334,6 +344,14 @@ tools:
           base: 0.7746
           cand: 0.7746
           better: 0.0
+    - date: '2026-11-23'
+      active: marking_level_kerb
+      previous: marking_level
+      by: person
+      note: edge lines along a kerb judged only by the step rule
+      evidence:
+        experiment: marking-level-kerb
+        note: kerb-side edge lines; not in the benchmark
   geom_check:
     purpose: verification without cameras - curbs vs LiDAR height steps, vector height vs LiDAR ground
     stage: verify
