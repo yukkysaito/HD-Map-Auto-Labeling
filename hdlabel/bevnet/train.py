@@ -81,6 +81,7 @@ def main(argv=None):
     p.add_argument(
         "--height", type=float, default=0.0, help="weight of the auxiliary road surface height loss (0: no head)"
     )
+    p.add_argument("--cnn-lr", type=float, default=1 / 3, help="lr factor of the trainable image CNN (0: frozen)")
     p.add_argument("--seed", type=int, default=0, help="other seeds measure the run-to-run spread of a result")
     p.add_argument("--tag", default="")
     a = p.parse_args(argv)
@@ -118,10 +119,14 @@ def main(argv=None):
             cnt += torch.bincount(torch.from_numpy(lab.astype(np.int64)).ravel(), minlength=NC)
     wts = class_weights(cnt).to(dev)
 
+    if a.cnn_lr == 0:
+        for n, q in net.named_parameters():
+            q.requires_grad_(q.requires_grad and not n.startswith(("enc.stem", "enc.body")))
     cnn = [q for n, q in net.named_parameters() if q.requires_grad and n.startswith(("enc.stem", "enc.body"))]
     rest = [q for n, q in net.named_parameters() if q.requires_grad and not n.startswith(("enc.stem", "enc.body"))]
-    opt = torch.optim.AdamW([dict(params=cnn, lr=a.lr / 3), dict(params=rest, lr=a.lr)], weight_decay=1e-4)
-    sched = torch.optim.lr_scheduler.OneCycleLR(opt, [a.lr / 3, a.lr], total_steps=a.steps, pct_start=0.05)
+    groups = [dict(params=cnn, lr=a.lr * a.cnn_lr)] * bool(cnn) + [dict(params=rest, lr=a.lr)]
+    opt = torch.optim.AdamW(groups, weight_decay=1e-4)
+    sched = torch.optim.lr_scheduler.OneCycleLR(opt, [g["lr"] for g in groups], total_steps=a.steps, pct_start=0.05)
     dl = torch.utils.data.DataLoader(train_set, batch_size=a.batch, shuffle=True, num_workers=a.workers,
                                      collate_fn=collate, drop_last=True, persistent_workers=True, prefetch_factor=2, pin_memory=True)  # fmt: skip
     t0, step, losses, curve = time.time(), 0, [], []
