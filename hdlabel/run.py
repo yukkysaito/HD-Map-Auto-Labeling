@@ -346,7 +346,8 @@ def tile_runs(xy, s, L, min_m=30.0):
 def split_scenes(area):
     """scenes = runs of a drive inside one cell of a fixed length_m grid (tile_runs); t_range = the samples' time range, bbox = the route +- context_m around it
     (so every sample's BEV ahead / behind is labelled) + corridor_m. Optional scenes.region (map box): only scenes whose
-    path centre is inside."""
+    path centre is inside. Order: the drives of the existing scenes.json first (as there), new drives after
+    (label_owners)."""
     sc = area.cfg["scenes"]
     L, ctx, cor = sc["length_m"], sc.get("context_m", 100), sc.get("corridor_m", 40)
     reg = (
@@ -382,8 +383,12 @@ def split_scenes(area):
                     bbox=np.round(np.r_[xy.min(0) - cor, xy.max(0) + cor], 1).tolist(),
                 )
             )
-    new = dict(length_m=L, context_m=ctx, corridor_m=cor, scenes=scenes)
     f = f"{area.work}/scenes.json"
+    rank = {}  # drives in their order in the existing scenes.json, then the new ones: label_owners keeps its owners
+    for x in json.load(open(f))["scenes"] if os.path.exists(f) else []:
+        rank.setdefault(x["drive"], len(rank))
+    scenes.sort(key=lambda x: rank.get(x["drive"], len(rank)))  # stable: new drives in config order, scenes by k
+    new = dict(length_m=L, context_m=ctx, corridor_m=cor, scenes=scenes)
     if not os.path.exists(f) or json.load(open(f)) != new:
         json.dump(new, open(f, "w"), indent=1)  # unchanged: keep its time
     ids = {s["id"] for s in scenes}
@@ -481,7 +486,10 @@ def scene_drives(area, s):
 def label_owners(area, scenes):
     """scene id -> id of the scene whose labels it uses. A scene shares the labels of an earlier scene (of another drive)
     that fuses the same drives and whose box contains its box (scenes.share_tolerance_m, default 20 m: the edge of the
-    context, 150+ m ahead): repeated drives of a road are labelled once, every drive still gets its own samples."""
+    context, 150+ m ahead): repeated drives of a road are labelled once, every drive still gets its own samples.
+    "Earlier" is the order of work/scenes.json, where split_scenes keeps the drives it already had first and appends
+    new ones: an added drive (even an older recording) does not take a place's labels over from the scene that owns
+    them (which would redo its labels, export, review and verification)."""
     own, done = {}, []
     for s in scenes:
         dr = set(scene_drives(area, s))

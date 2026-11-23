@@ -70,6 +70,38 @@ def test_label_sharing(area, monkeypatch):
     assert run.label_owners(area, sc) == {"a_0": "a_0", "b_0": "a_0", "b_1": "b_1", "c_0": "c_0"}
 
 
+def test_added_drive_keeps_owners(tmp_path, monkeypatch):
+    """a drive added later - here recorded before the others, so first in name order - is appended in scenes.json:
+    the scenes that own a place's labels keep them, the new drive's scenes share them."""
+    import json
+
+    def area_of(names):
+        f = tmp_path / "p.yaml"
+        f.write_text(yaml.safe_dump(dict(name="t", output=str(tmp_path / "out"), scenes=dict(length_m=100),
+                                         drives={d: dict(bags=str(tmp_path / "none")) for d in names})))  # fmt: skip
+        return run.Area(str(f))
+
+    x = np.arange(0, 250, 0.5)
+    for d in ("2026a", "2026b", "2026c"):
+        D = tmp_path / "out" / "t" / "work" / "drives" / d
+        D.mkdir(parents=True)
+        (D / "ingest.json").write_text(json.dumps(dict(cameras=[0])))
+        g = np.zeros((len(x), 8))
+        g[:, 0], g[:, 1], g[:, 7] = np.arange(len(x)) * 1e8, x, 1.0  # straight road along x, yaw 0
+        np.save(D / "gt.npy", g)
+    monkeypatch.setattr(run, "scene_drives", lambda area_, s: ["2026a", "2026b", "2026c"])
+    area = area_of(["2026b", "2026c"])
+    run.split_scenes(area)
+    owners = run.label_owners(area, area.scenes())
+    assert {o[:5] for o in owners.values()} == {"2026b"}
+    area = area_of(["2026a", "2026b", "2026c"])  # config / name order: the new drive first
+    assert list(area.drives)[0] == "2026a"
+    run.split_scenes(area)
+    assert [s["drive"] for s in area.scenes()][::3] == ["2026b", "2026c", "2026a"]
+    new = run.label_owners(area, area.scenes())
+    assert {k: v for k, v in new.items() if k in owners} == owners and set(new.values()) == set(owners.values())
+
+
 def test_fixes_file_per_scene(area):
     """vectorize gets the review fixes inside its scene's box only: a fix elsewhere (another scene verified, a new
     drive's scenes) leaves the file, and so the scene's vectors and everything after them, untouched."""

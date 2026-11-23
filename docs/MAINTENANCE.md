@@ -177,6 +177,8 @@ Scale test (2026-11-15): 17 one-minute bags, each as its own drive; no debug out
   Scenes are cut on a fixed map grid (`length_m` squares, `run.tile_runs`), so drives starting at different places
   get the same scenes on the same road. In the sample data 11 of 20 scenes were shared (including a drive returning
   to the same place). Samples (images, poses) are still made per drive. A scene whose box sticks out of the earlier
-  box by more than the tolerance (e.g. a drive turning another way after the same cell) is not shared.
+  box by more than the tolerance (e.g. a drive turning another way after the same cell) is not shared. "Earlier" is
+  the order of `work/scenes.json`: the drives it already lists stay first, added drives come after (even if recorded
+  before), so adding a drive does not move a place's labels to another scene.
 - **Slopes and elevated roads with real logs**: the geometry was checked on the real map with virtual drives (baselines), but no
   logged drive up a slope or on top of an elevated road exists yet, so labels from camera images there are unverified.
