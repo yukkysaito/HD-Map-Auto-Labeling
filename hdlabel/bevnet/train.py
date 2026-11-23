@@ -81,10 +81,11 @@ def main(argv=None):
     p.add_argument(
         "--height", type=float, default=0.0, help="weight of the auxiliary road surface height loss (0: no head)"
     )
+    p.add_argument("--seed", type=int, default=0, help="other seeds measure the run-to-run spread of a result")
     p.add_argument("--tag", default="")
     a = p.parse_args(argv)
-    torch.manual_seed(0)
-    np.random.seed(0)
+    torch.manual_seed(a.seed)
+    np.random.seed(a.seed)
     dev = "cuda"
 
     bev = dict(json.load(open(a.dataset_json[0]))["bev"], x=a.bev_x, y=a.bev_y, res=a.label_res)
