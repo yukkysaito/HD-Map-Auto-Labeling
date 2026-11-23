@@ -212,7 +212,6 @@ class Agents:
         self.lock = threading.Lock()
         self.spent = 0.0
         BIN.update({k: os.path.expanduser(v) for k, v in (self.cfg.get("bin") or {}).items()})
-        os.makedirs(f"{root}/cache", exist_ok=True)
 
     def model_of(self, role: str) -> dict:
         r = self.roles.get(role) or self.roles.get("default") or {}
@@ -283,6 +282,7 @@ class Agents:
         return rep.meta["tokens"] / 1e6 * float(p) if p else 0.0
 
     def _log(self, role, rep: Reply, key):
+        os.makedirs(self.root, exist_ok=True)
         with self.lock, open(f"{self.root}/ledger.jsonl", "a") as f:
             f.write(json.dumps(dict(time=time.strftime("%Y-%m-%d %H:%M:%S"), role=role, provider=rep.provider,
                                     model=rep.model, cost_usd=round(rep.cost_usd, 5), seconds=rep.seconds,

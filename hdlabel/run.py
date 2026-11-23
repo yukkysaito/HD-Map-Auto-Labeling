@@ -92,8 +92,9 @@ class Area:
         self.debug = c.get("debug", True) if debug is None else debug
         self.review = path(c.get("review_dir") or f"review/{self.name}")
         self.tf_static = c.get("tf_static") and path(c["tf_static"])
-        os.makedirs(f"{self.dbg}/logs", exist_ok=True)
-        os.makedirs(f"{self.work}/stamps", exist_ok=True)
+        if DRY_RUN is None:  # impact (dry run) leaves the output tree as it is
+            os.makedirs(f"{self.dbg}/logs", exist_ok=True)
+            os.makedirs(f"{self.work}/stamps", exist_ok=True)
         self.sensors = json.dumps(
             {k: c.get(k) for k in ("topics", "base_frame", "cameras", "image_scale", "jpeg_quality")}, sort_keys=True
         )  # ingest's settings: part of its arguments (changed -> ingested again)
@@ -202,8 +203,8 @@ def class_map(area) -> str:
     return json.dumps(cm, sort_keys=True) if cm else ""
 
 
-DRY_RUN = None  # a list: step() only records (tag, script) of the steps that would run
-DRY_RUN_OUT = set()  # their outputs (steps reading them would run too)
+DRY_RUN = None  # a list: step() only records (tag, script) of the steps that would run; nothing is written or removed
+DRY_RUN_OUT = set()  # their outputs and the files that would be rewritten (steps reading them would run too)
 
 
 def step(area, tag, script, args, outputs, inputs=(), gpu=False, force=False):
@@ -304,7 +305,8 @@ def ingest(area, d, force):
         )
         if not tfb:
             raise StepError(f"{d}: {f} has no frame chained to {area.cfg.get('base_frame', 'base_link')}", None)
-        json.dump(tfb, open(f"{D}/tf_static.json", "w"), indent=1)
+        if DRY_RUN is None:
+            json.dump(tfb, open(f"{D}/tf_static.json", "w"), indent=1)
         print(f"  {d}: tf_static from {os.path.relpath(f, ROOT)}")
     step(
         area,
@@ -579,6 +581,10 @@ def fixes_file(area, s) -> str:
     f = f"{area.scene_dir(s['id'])}/fixes.json"
     with area.lock:
         fx = [x for r in area.reviews() for x in json.load(open(r)).get("fixes", []) if inside(x)]
+        if DRY_RUN is not None:  # impact: the vectorize step would run when the file would change
+            if not os.path.exists(f) or json.load(open(f)) != json.loads(json.dumps(dict(fixes=fx))):
+                DRY_RUN_OUT.add(f)
+            return f
         os.makedirs(os.path.dirname(f), exist_ok=True)
         save_json(f, dict(fixes=fx))
     return f
@@ -588,7 +594,8 @@ def label(area, s, force):
     sid = s["id"]
     owner = area.owners.get(sid, sid)
     if owner != sid:  # same drives, inside the owner's box: shared labels
-        shutil.rmtree(area.scene_dir(sid), ignore_errors=True)  # own labels of an earlier run would be stale
+        if DRY_RUN is None:
+            shutil.rmtree(area.scene_dir(sid), ignore_errors=True)  # own labels of an earlier run would be stale
         return f"labels shared with {owner}"
     S = area.scene_dir(sid)
     Dg = area.dbg_dir(sid) if area.debug else None
@@ -622,7 +629,8 @@ def label(area, s, force):
     reg = registry.load()
     fx = annotate.facts(area, s, drives)
     chosen = annotate.plan(reg, fx)
-    json.dump(dict(facts=fx, tools=chosen), open(f"{S}/plan.json", "w"), indent=1)
+    if DRY_RUN is None:
+        json.dump(dict(facts=fx, tools=chosen), open(f"{S}/plan.json", "w"), indent=1)
     ov = annotate.overlay(reg, chosen)
     if ov:  # another variant than the active one for this scene: its settings
         area = copy.copy(area)
@@ -1196,6 +1204,9 @@ def main():
     for o in ("--adopt", "--rebase", "--scan", "--dry"):
         p.add_argument(o, action="store_true", help="agent commands (hdlabel/agents/cli.py)")
     a = p.parse_args()
+    if a.command == "impact":  # a dry run from the start: Area() creates no folders either
+        global DRY_RUN
+        DRY_RUN = []
     if a.command in AGENT_COMMANDS:  # ./autolabel bench build CONFIG: the action words are not the config
         words = [x for x in [a.config, *a.rest] if x is not None]
         cfgs = [x for x in words if x.endswith((".yaml", ".yml"))]

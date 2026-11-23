@@ -46,7 +46,8 @@ rewrite an input of later steps write a file only when its content changes (e.g.
 `work/scenes/<scene>/fixes.json` = the fixes of all review files that lie in the scene's box, which is what vectorize
 reads), so a rerun does not cascade and a decision or a new drive elsewhere does not redo a scene's vectors. Paths
 under the output root are replaced by `<OUT>` in the key, so experiments (`output/<name>/experiments/<id>/`) reuse the
-stamps of unchanged steps. `./autolabel impact` lists what a change would redo without running anything.
+stamps of unchanged steps. `./autolabel impact` lists what a change would redo without running, writing or removing
+anything (`run.DRY_RUN`).
 
 ## Checks after a change
 1. `./autolabel test` passes (also with `HDLABEL_DEVICE=cpu`), `ruff check . && ruff format --check .` and

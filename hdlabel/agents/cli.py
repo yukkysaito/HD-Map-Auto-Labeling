@@ -216,7 +216,8 @@ def experiment_cmd(area, a):
 
 def impact_cmd(area, a):
     """which steps would run again with the current code / registry (or with --variant TOOL=NAME): a dry run of the
-    stamps (run.step), nothing is executed; steps reading a redone step's outputs are included."""
+    stamps (run.step), nothing is executed, written or removed; steps reading a redone step's outputs (or a file that
+    would be rewritten, like a scene's fixes.json) are included."""
     from hdlabel import run
 
     tool, var = parse_variant(a.variant)

@@ -15,6 +15,7 @@ def area(tmp_path):
         name="t",
         pointcloud_map="/nonexistent/pointcloud_map.pcd",
         output=str(tmp_path / "out"),
+        review_dir=str(tmp_path / "review"),  # not the repository's review/
         scenes=dict(length_m=100),
         dataset=dict(bev=dict(x=[0, 10], y=[-5, 5], res=0.5)),
     )
@@ -87,6 +88,48 @@ def test_fixes_file_per_scene(area):
     json.dump(dict(fixes=[fix(50, 50)]), open(f"{area.review}/b.json", "w"))  # this scene
     run.fixes_file(area, s)
     assert len(json.load(open(f))["fixes"]) == 3 and os.path.getmtime(f) > t - 10
+
+
+def test_impact_is_a_dry_run(tmp_path, monkeypatch, capsys):
+    """./autolabel impact changes nothing in the output tree (no folders, stamps, plans, fixes files, no removal of a
+    shared scene's former labels) and still lists the steps that would run (vectorize: its fixes file would change)."""
+    import json
+    import sys
+
+    out, rv = tmp_path / "out", tmp_path / "review"
+    (tmp_path / "bags").mkdir()
+    for d in ("a", "b"):
+        (tmp_path / "bags" / f"{d}.mcap").write_bytes(b"")
+    cfg = dict(name="t", pointcloud_map=str(tmp_path / "map.pcd"), output=str(out), review_dir=str(rv),
+               scenes=dict(length_m=100), dataset=dict(bev=dict(x=[0, 10], y=[-5, 5], res=0.5)),
+               drives={d: dict(bags=str(tmp_path / "bags" / f"{d}.mcap"), tf_from="a" if d == "b" else None)
+                       for d in ("a", "b")})  # fmt: skip
+    (tmp_path / "p.yaml").write_text(yaml.safe_dump(cfg))
+    W = out / "t" / "work"
+    for d in ("a", "b"):
+        (W / "drives" / d).mkdir(parents=True)
+        (W / "drives" / d / "ingest.json").write_text(json.dumps(dict(cameras=[0])))
+    (W / "drives" / "a" / "tf_static.json").write_text("{}")  # b's camera mounting would come from a (tf_from)
+    sc = [dict(id=f"{d}_000", drive=d, bbox=[0, 0, 100, 100], t_range=[0, 1], route_t=[0, 1]) for d in ("a", "b")]
+    (W / "scenes.json").write_text(json.dumps(dict(scenes=sc)))
+    (W / "scenes" / "b_000" / "labels").mkdir(parents=True)  # labels of b_000 from before it shared a_000's
+    (W / "scenes" / "b_000" / "labels" / "ground_map.npz").write_bytes(b"x")
+    (W / "scenes" / "a_000").mkdir()
+    rv.mkdir()
+    (rv / "a_000.json").write_text(json.dumps(dict(fixes=[dict(kind="lane_line", at=[10, 10], action="delete")])))
+    monkeypatch.setattr(run, "scene_drives", lambda area_, s: ["a", "b"])
+    monkeypatch.setattr(run, "load_tf_static", lambda *a_: {"cam0": {}})
+
+    def tree():
+        return {str(p): (p.stat().st_mtime_ns, p.read_bytes() if p.is_file() else None) for p in tmp_path.rglob("*")}
+
+    before = tree()
+    monkeypatch.setattr(sys, "argv", ["autolabel", "impact", str(tmp_path / "p.yaml")])
+    run.main()
+    assert run.DRY_RUN is None
+    assert tree() == before
+    got = capsys.readouterr().out
+    assert "vectors_a_000" in got and "ingest_b" in got and "labels_b_000" not in got
 
 
 def test_tile_runs_align_drives():
