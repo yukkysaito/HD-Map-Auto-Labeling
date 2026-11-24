@@ -43,6 +43,12 @@ def main(argv=None):
     p.add_argument(
         "--step", type=float, default=0.25, help="max height step between neighbouring 0.5 m cells of one level (m)"
     )
+    p.add_argument(
+        "--void-reach",
+        type=float,
+        default=1.0,
+        help="no surface farther than this from a ground point where map points lie > 2 m below (drop-off; 0: off)",
+    )
     a = p.parse_args(argv)
 
     bb = np.array(a.bbox)
@@ -64,7 +70,7 @@ def main(argv=None):
     P[:, :3] -= origin
     lo = np.floor((bb[:2] - origin[:2]) / a.surf_res) * a.surf_res
     grid = Grid(lo, np.ceil((bb[2:] - origin[:2] - lo) / a.surf_res).astype(int), a.surf_res, origin)
-    S = build(P, [t - origin for t in trajs], grid, a.corridor, a.step)
+    S = build(P, [t - origin for t in trajs], grid, a.corridor, a.step, a.void_reach)
     H = S["height"]
     print(f"{len(files)} tiles, {S['info']}, height {np.nanmin(H) + origin[2]:.2f} .. {np.nanmax(H) + origin[2]:.2f} m")
 

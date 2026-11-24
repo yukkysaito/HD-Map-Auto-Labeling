@@ -107,8 +107,8 @@ stay unlabelled in `map.npz`; the file only tags where they are.
   (float16 [2, nx, ny]: dz of that level above / below, NaN = none or unknown) and `multilevel` (share of the crop's
   cells with another level; NaN without the file). A sample is multilevel from `loader.MULTILEVEL` (5%).
 - `python -m hdlabel.bevnet.evaluate ... --by-level` also scores multilevel and single-level samples and the labelled
-  cells under / above another level separately (with the road surface height MAE of each group when the model has the
-  height head).
+  cells under / above another level separately, with the labelled area each group was scored on (`labelled_m2`) and
+  the road surface height MAE of each group when the model has the height head.
 
 ## Vectors (vectors.geojson -> ego frame)
 `SceneMap.vectors(T_map_base, x, y)` transforms them to base_link and crops them to the range.

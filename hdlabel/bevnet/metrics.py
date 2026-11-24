@@ -147,13 +147,15 @@ def evaluate(net, ds, n: int | None = None, known: bool = False, by_level: float
 
 class LevelScores:
     """Scores split by road levels: per sample (multilevel / single_level by the crop share `thr`) and per cell
-    (overhead: labelled cells with another level above; above_lower: with another level below); with a height head
-    also the road surface height MAE of each group (`height_mae`, m)."""
+    (overhead: labelled cells with another level above; above_lower: with another level below); `labelled_m2`: the
+    labelled area each group was scored on (a cell group of a few m2 scores a few edge cells, not a level); with a
+    height head also the road surface height MAE of each group (`height_mae`, m)."""
 
     def __init__(self, res: float, thr: float):
-        self.thr, self.no_levels = thr, 0
+        self.thr, self.no_levels, self.res = thr, 0, res
         self.s = {k: Scores(res) for k in ("multilevel", "single_level", "overhead", "above_lower")}
         self.n = dict.fromkeys(self.s, 0)
+        self.cells = dict.fromkeys(self.s, 0)  # labelled cells scored
         self.h = {k: torch.zeros(2) for k in self.s}  # sum |height error|, cells
 
     def add_height(self, k, e, m=None):
@@ -169,6 +171,7 @@ class LevelScores:
         k = "multilevel" if share >= self.thr else "single_level"
         self.s[k].add(pr, y, pk)
         self.n[k] += 1
+        self.cells[k] += int((y > 0).sum())
         if herr is not None:
             self.add_height(k, herr)
         for b, (k, bit) in enumerate((("overhead", 1), ("above_lower", 2))):
@@ -177,6 +180,7 @@ class LevelScores:
                 z = torch.zeros_like(y)
                 self.s[k].add(pr, torch.where(m, y, z), torch.where(m, pk, z.to(pk.dtype)))
                 self.n[k] += 1
+                self.cells[k] += int((m & (y > 0)).sum())
             if herr is not None:  # context cells partly under / over the other level
                 self.add_height(k, herr, level_bits(level[None], f)[0, b] > 0)
 
@@ -184,7 +188,7 @@ class LevelScores:
         out = {}
         for k in self.s:
             if self.n[k]:
-                out[k] = dict(self.s[k].result(), samples=self.n[k])
+                out[k] = dict(self.s[k].result(), samples=self.n[k], labelled_m2=round(self.cells[k] * self.res**2, 1))
             if self.h[k][1] > 0:
                 out.setdefault(k, dict(samples=self.n[k]))["height_mae"] = round(float(self.h[k][0] / self.h[k][1]), 3)
         return dict(out, threshold=self.thr, no_levels=self.no_levels)

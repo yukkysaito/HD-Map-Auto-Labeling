@@ -12,7 +12,11 @@ crossing over), so the level is chosen by connectivity, not by a height band:
      road below is not connected at all,
   4. robust coarse surface from the chosen layers (normalised convolution, cells off by > 0.3 / 0.15 m dropped:
      cars, vegetation), ground points = |z - coarse| < 0.15 m, splatted and filled by multi-scale normalised
-     convolution (finest scale with >= 3 points within ~sigma wins).
+     convolution (finest scale with >= 3 points within ~sigma wins),
+  5. no surface over a drop-off: the fill reaches several m beyond the last ground point; where map points lie more
+     than `drop` m below such a filled cell (deck edge, an open cut beside the road, the road below seen past a
+     railing) the surface would hang in the air and camera labels projected onto it would be the lower level at the
+     wrong place, so cells farther than `void_reach` m from a ground point with such points below are dropped.
 Grid convention: cell (i, j) covers map x = origin.x + lo.x + i * res, y = origin.y + lo.y + j * res.
 """
 
@@ -23,7 +27,7 @@ import os
 import re
 
 import numpy as np
-from scipy.ndimage import gaussian_filter, map_coordinates
+from scipy.ndimage import distance_transform_edt, gaussian_filter, map_coordinates, maximum_filter
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import dijkstra
 from scipy.spatial import cKDTree
@@ -183,8 +187,31 @@ class Grid:
         return gaussian_filter(Z, sig_m / self.res) / np.maximum(sw, 1e-9), sw
 
 
-def build(P: np.ndarray, trajs: list[np.ndarray], grid: Grid, corridor: float = 40.0, step: float = 0.25) -> dict:
-    """P: map points relative to grid.origin [N, >=3]; trajs: trajectories (base_link xyz, same frame).
+def drop_void(H: np.ndarray, P: np.ndarray, ground: np.ndarray, grid: Grid, reach: float = 1.0, drop: float = 2.0):
+    """bool [grid]: cells of H farther than reach m from a ground point (P[ground]) with a map point more than drop m
+    below the surface within one cell (step 5 of the module doc)."""
+    ij = np.floor((P[:, :2] - grid.lo) / grid.res).astype(int)
+    ins = np.all((ij >= 0) & (ij < grid.shape), 1)
+    near = np.zeros(grid.shape, bool)
+    near[tuple(ij[ins & ground].T)] = True
+    s = ins.copy()
+    s[ins] = P[ins, 2] < H[tuple(ij[ins].T)] - drop  # NaN surface: False
+    low = np.zeros(grid.shape, bool)
+    low[tuple(ij[s].T)] = True
+    return np.isfinite(H) & maximum_filter(low, 3) & (distance_transform_edt(~near) * grid.res > reach)
+
+
+def build(
+    P: np.ndarray,
+    trajs: list[np.ndarray],
+    grid: Grid,
+    corridor: float = 40.0,
+    step: float = 0.25,
+    void_reach: float = 1.0,
+    drop: float = 2.0,
+) -> dict:
+    """P: map points relative to grid.origin [N, >=3]; trajs: trajectories (base_link xyz, same frame); void_reach,
+    drop: step 5 of the module doc (void_reach <= 0: off).
     Returns dict(height, height_w (grid), ground (indices into P of the ground points), info)."""
     traj = np.concatenate([densify(t) for t in trajs])
     tree = cKDTree(traj[:, :2])
@@ -212,6 +239,8 @@ def build(P: np.ndarray, trajs: list[np.ndarray], grid: Grid, corridor: float = 
         good = sw * 2 * np.pi * (sig / grid.res) ** 2 > 3
         H[good] = h[good]
         HW[good] = sw[good]
+    void = drop_void(H, P, g, grid, void_reach, drop) if void_reach > 0 else np.zeros(grid.shape, bool)
+    H[void], HW[void] = np.nan, 0.0
     multi = int((np.isfinite(Hl).sum(1) > 1).sum())
     info = dict(
         points=int(len(P)),
@@ -220,6 +249,7 @@ def build(P: np.ndarray, trajs: list[np.ndarray], grid: Grid, corridor: float = 
         multi_layer_cells=multi,
         connected_cells=int(ok.sum()),
         unconnected_cells=int((~ok).sum()),
+        void_cells=int(void.sum()),
         covered=round(float(np.isfinite(H).mean()), 3),
     )
     return dict(height=H, height_w=HW, ground=idx_in[g], info=info)

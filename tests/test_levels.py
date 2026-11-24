@@ -129,6 +129,7 @@ def test_level_scores_split_samples_and_cells():
     assert r["multilevel"]["samples"] == 1 and r["single_level"]["samples"] == 1 and r["no_levels"] == 1
     assert r["single_level"]["iou"]["road"] == 1.0 and r["multilevel"]["iou"]["road"] == 0.5
     assert r["overhead"]["iou"]["road"] == 0.0 and "above_lower" not in r
+    assert r["overhead"]["labelled_m2"] == 1.0 and r["multilevel"]["labelled_m2"] == 2.0  # 100 / 200 cells of 0.01 m2
 
 
 def test_evaluate_reports_scores_by_level():

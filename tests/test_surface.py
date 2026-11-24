@@ -50,6 +50,18 @@ def test_deck_trajectory_excludes_road_below():
     assert np.isnan(at(S, 25, 0)) and np.isnan(at(S, -25, -20))
 
 
+def test_no_surface_in_the_air_beyond_the_deck_edge():
+    """the fill must not carry the deck surface out over the drop at its edge (labels would be painted there)."""
+    P = synthetic_map()
+    traj = np.c_[np.zeros(200), np.linspace(-45, 45, 200), np.full(200, 5.0)]
+    S = build(P, [traj], GRID, corridor=40.0)
+    assert abs(at(S, 7.5, 0) - 5.0) < 0.05, "the deck itself stays"
+    assert np.isnan(at(S, 9.5, 0)) and np.isnan(at(S, -9.5, 10)), "beyond the deck edge there is no surface"
+    assert S["info"]["void_cells"] > 0
+    off = build(P, [traj], GRID, corridor=40.0, void_reach=0)
+    assert abs(at(off, 9.5, 0) - 5.0) < 0.1 and off["info"]["void_cells"] == 0  # the fill without the rule
+
+
 def test_frames_on_another_level_are_excluded(tmp_path):
     """a drive passing UNDER the scene's road level (e.g. the scene is on a bridge): its poses are flagged off_level and its
     camera frames are not used (mapproj.snap_to_ground / Camera.on_level)."""
